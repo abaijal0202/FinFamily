@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Review Import — FinFamily{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Review Statement Import</h1>
+    <div class="subtitle">{{ stmt_import.bank }} &middot; {{ stmt_import.original_filename }} &middot; uploaded {{ stmt_import.uploaded_at.strftime('%d %b %Y, %H:%M') }}</div>
+  </div>
+</div>
+
+{% if stmt_import.warning_list %}
+<div class="panel" style="border-left:4px solid var(--red); margin-bottom:20px;">
+  <h3 style="color:var(--red); margin:0 0 10px 0;">Parser Warnings — please review carefully</h3>
+  <ul style="margin:0; padding-left:18px; font-size:13px; color:var(--ink-soft);">
+    {% for w in stmt_import.warning_list %}<li>{{ w }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if stmt_import.status != 'pending_review' %}
+<div class="empty-state"><h3>This import is {{ stmt_import.status.replace('_',' ') }}</h3></div>
+{% else %}
+<script>
+const CATEGORY_OPTIONS = `{% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}`;
+const INPUT_STYLE = 'padding:6px 8px; font-size:12.5px; width:100%;';
+let manualAccountCount = 1;
+
+function addTxnRow(accId) {
+  const tbody = document.getElementById('txns_' + accId);
+  const counterEl = document.getElementById('newcount_' + accId);
+  const idx = parseInt(counterEl.value, 10);
+  const prefix = 'new_txn_' + accId;
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    '<td></td>' +
+    '<td><input type="date" name="' + prefix + '_date_' + idx + '" style="' + INPUT_STYLE + '"></td>' +
+    '<td><input type="text" name="' + prefix + '_narration_' + idx + '" placeholder="Narration" style="' + INPUT_STYLE + '"></td>' +
+    '<td><input type="number" step="0.01" name="' + prefix + '_withdrawal_' + idx + '" style="' + INPUT_STYLE + '"></td>' +
+    '<td><input type="number" step="0.01" name="' + prefix + '_deposit_' + idx + '" style="' + INPUT_STYLE + '"></td>' +
+    '<td><input type="number" step="0.01" name="' + prefix + '_balance_' + idx + '" style="' + INPUT_STYLE + '"></td>' +
+    '<td><select name="' + prefix + '_category_' + idx + '" style="font-size:12px; padding:6px 8px;">' + CATEGORY_OPTIONS + '</select></td>';
+  tbody.appendChild(tr);
+  counterEl.value = idx + 1;
+}
+
+function addManualTxnRow(i) {
+  const tbody = document.getElementById('manual_txns_' + i);
+  const counterEl = document.getElementById('manual_newcount_' + i);
+  const idx = parseInt(counterEl.value, 10);
+  const prefix = 'manual_txn_' + i;
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    '<td><input type="date" name="' + prefix + '_date_' + idx + '" style="' + INPUT_STYLE + '"></td>' +
+    '<td><input type="text" name="' + prefix + '_narration_' + idx + '" style="' + INPUT_STYLE + '"></td>' +
+    '<td><input type="number" step="0.01" name="' + prefix + '_withdrawal_' + idx + '" style="' + INPUT_STYLE + '"></td>' +
+    '<td><input type="number" step="0.01" name="' + prefix + '_deposit_' + idx + '" style="' + INPUT_STYLE + '"></td>' +
+    '<td><input type="number" step="0.01" name="' + prefix + '_balance_' + idx + '" style="' + INPUT_STYLE + '"></td>' +
+    '<td><select name="' + prefix + '_category_' + idx + '" style="font-size:12px; padding:6px 8px;">' + CATEGORY_OPTIONS + '</select></td>';
+  tbody.appendChild(tr);
+  counterEl.value = idx + 1;
+}
+
+function manualAccountBlock(i) {
+  return (
+    '<div class="form-row" style="align-items:flex-end; margin-bottom:14px;">' +
+      '<div class="field" style="flex:2;">' +
+        '<label>Account name</label>' +
+        '<input type="text" name="manual_asset_name_' + i + '" placeholder="e.g. ICICI Savings ••1234">' +
+      '</div>' +
+      '<div class="field" style="flex:1;">' +
+        '<label>Type</label>' +
+        '<select name="manual_account_kind_' + i + '"><option value="BANK">Bank Account</option><option value="FD">Fixed Deposit</option></select>' +
+      '</div>' +
+      '<div class="field" style="flex:1;">' +
+        '<label>Closing balance (&#8377;)</label>' +
+        '<input type="number" step="0.01" name="manual_closing_balance_' + i + '">' +
+      '</div>' +
+      '<div class="field" style="flex:1;">' +
+        '<label>Last 4 digits</label>' +
+        '<input type="text" name="manual_last4_' + i + '" maxlength="4">' +
+      '</div>' +
+    '</div>' +
+    '<input type="hidden" name="manual_asset_choice_' + i + '" value="new">' +
+    '<table><thead><tr><th>Date</th><th>Narration</th><th class="text-right">Withdrawal</th><th class="text-right">Deposit</th><th class="text-right">Balance</th><th>Category</th></tr></thead>' +
+    '<tbody id="manual_txns_' + i + '"></tbody></table>' +
+    '<input type="hidden" id="manual_newcount_' + i + '" value="0">' +
+    '<button type="button" class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="addManualTxnRow(' + i + ')">+ Add transaction</button>'
+  );
+}
+
+function addManualAccount() {
+  const container = document.getElementById('manual_accounts');
+  const i = manualAccountCount;
+  const div = document.createElement('div');
+  div.className = 'panel';
+  div.style.marginBottom = '20px';
+  div.innerHTML = manualAccountBlock(i);
+  container.appendChild(div);
+  manualAccountCount = i + 1;
+  document.getElementById('manual_account_count').value = manualAccountCount;
+}
+</script>
+
+<form method="POST" action="{{ url_for('import_confirm', import_id=stmt_import.id) }}">
+  {% for acc in stmt_import.accounts %}
+  <div class="panel" style="margin-bottom:20px;">
+    <div class="form-row" style="align-items:flex-end; margin-bottom:14px;">
+      <div class="field" style="flex:2;">
+        <label>{{ acc.account_kind }} Account &bull;&bull;{{ acc.account_number_last4 or '????' }}{% if acc.account_type %} — {{ acc.account_type }}{% endif %}</label>
+        <select name="asset_choice_{{ acc.id }}" onchange="document.getElementById('name_{{ acc.id }}').style.display = this.value=='new' ? 'block' : 'none';">
+          <option value="new" {{ 'selected' if not acc.matched_asset_id else '' }}>+ Create new asset</option>
+          {% for a in assets %}
+          <option value="{{ a.id }}" {{ 'selected' if acc.matched_asset_id==a.id else '' }}>Update: {{ a.name }} ({{ a.meta.label }}{% if a.account_number_last4 %} &bull;&bull;{{ a.account_number_last4 }}{% endif %})</option>
+          {% endfor %}
+          <option value="skip">Skip this account</option>
+        </select>
+      </div>
+      <div class="field" id="name_{{ acc.id }}" style="flex:2; {{ 'display:none;' if acc.matched_asset_id else '' }}">
+        <label>New asset name</label>
+        <input type="text" name="asset_name_{{ acc.id }}" value="{{ acc.suggested_name }}">
+      </div>
+      <div class="field" style="flex:1;">
+        <label>Closing balance (&#8377;)</label>
+        <input type="number" step="0.01" name="closing_balance_{{ acc.id }}" value="{{ acc.closing_balance if acc.closing_balance is not none else '' }}">
+        <div class="hint">Used as the asset's current value. Edit if the parser misread it.</div>
+      </div>
+      <div class="field" style="flex:1;">
+        <label>Last 4 digits</label>
+        <input type="text" name="last4_{{ acc.id }}" maxlength="4" value="{{ acc.account_number_last4 or '' }}">
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th></th><th>Date</th><th>Narration</th><th class="text-right">Withdrawal</th><th class="text-right">Deposit</th><th class="text-right">Balance</th><th>Category</th></tr>
+      </thead>
+      <tbody id="txns_{{ acc.id }}">
+        {% for t in acc.transactions %}
+        <tr style="{{ 'opacity:0.5;' if t.is_duplicate else '' }}">
+          <td><input type="checkbox" name="include_txn_{{ t.id }}" {{ 'checked' if t.include and not t.is_duplicate else '' }}></td>
+          <td><input type="date" name="txn_date_{{ t.id }}" value="{{ t.txn_date.isoformat() }}" style="padding:6px 8px; font-size:12.5px; width:130px;"></td>
+          <td><input type="text" name="txn_narration_{{ t.id }}" value="{{ t.narration }}" style="padding:6px 8px; font-size:12.5px; width:100%; min-width:260px;">{% if t.is_duplicate %} <span class="pill">already imported</span>{% endif %}</td>
+          <td><input type="number" step="0.01" name="txn_withdrawal_{{ t.id }}" value="{{ t.withdrawal }}" style="padding:6px 8px; font-size:12.5px; width:100px; text-align:right;"></td>
+          <td><input type="number" step="0.01" name="txn_deposit_{{ t.id }}" value="{{ t.deposit }}" style="padding:6px 8px; font-size:12.5px; width:100px; text-align:right;"></td>
+          <td><input type="number" step="0.01" name="txn_balance_{{ t.id }}" value="{{ t.balance_after if t.balance_after is not none else '' }}" style="padding:6px 8px; font-size:12.5px; width:110px; text-align:right;"></td>
+          <td>
+            <select name="category_{{ t.id }}" style="font-size:12px; padding:6px 8px;">
+              {% for c in categories %}
+              <option value="{{ c }}" {{ 'selected' if t.category==c else '' }}>{{ c }}</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not acc.transactions %}
+        <tr><td colspan="7" class="text-muted" style="font-size:13px;">No transaction lines parsed for this account (balance-only, e.g. a fixed deposit) — add rows below if needed.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+    <input type="hidden" id="newcount_{{ acc.id }}" value="0">
+    <button type="button" class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="addTxnRow({{ acc.id }})">+ Add transaction</button>
+  </div>
+  {% endfor %}
+
+  <h3 style="font-family:'Fraunces',serif; color:var(--navy); font-size:16px; margin:24px 0 12px 0;">Missing an account?</h3>
+  <div class="text-muted" style="font-size:13px; margin-bottom:14px;">If the parser didn't pick up one of your accounts at all, add it here — same review flow, entered by hand.</div>
+  <div id="manual_accounts"></div>
+  <input type="hidden" id="manual_account_count" name="manual_account_count" value="1">
+  <div style="display:flex; gap:10px; margin-bottom:24px;">
+    <button type="button" class="btn btn-outline btn-sm" onclick="addManualAccount()">+ Add another account</button>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <button type="submit" class="btn btn-primary" style="width:auto;">Confirm &amp; Add to FinFamily</button>
+    <a href="{{ url_for('import_home') }}" class="btn btn-outline">Back</a>
+  </div>
+</form>
+<form method="POST" action="{{ url_for('import_discard', import_id=stmt_import.id) }}" style="margin-top:12px;" onsubmit="return confirm('Discard this import? Nothing will be added.');">
+  <button type="submit" class="btn btn-danger btn-sm">Discard this import</button>
+</form>
+
+<script>
+(function () {
+  const div = document.createElement('div');
+  div.className = 'panel';
+  div.style.marginBottom = '20px';
+  div.innerHTML = manualAccountBlock(0);
+  document.getElementById('manual_accounts').appendChild(div);
+})();
+</script>
+{% endif %}
+{% endblock %}

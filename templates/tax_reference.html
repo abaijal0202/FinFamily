@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Tax Reference — FinFamily{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Tax-Reference View</h1>
+    <div class="subtitle">Informational only — not tax advice or a substitute for filing (Sec 6.7 / 10.5)</div>
+  </div>
+</div>
+
+<div class="kpi-row" style="grid-template-columns: repeat(2,1fr);">
+  <div class="kpi-card">
+    <div class="kpi-label">Estimated Unrealized Gains</div>
+    <div class="kpi-value">₹{{ '{:,.0f}'.format(total_gain) }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Estimated Annual Interest Income</div>
+    <div class="kpi-value">₹{{ '{:,.0f}'.format(total_interest) }}</div>
+  </div>
+</div>
+
+<div class="panel" style="margin-bottom: 24px;">
+  <h3>Capital Gains (Equity / Mutual Funds / Gold / Real Estate)</h3>
+  {% if gains_rows %}
+  <table>
+    <thead><tr><th>Asset</th><th>Category</th><th class="text-right">Purchase Value</th><th class="text-right">Current Value</th><th class="text-right">Gain / Loss</th><th>Holding</th></tr></thead>
+    <tbody>
+      {% for r in gains_rows %}
+      <tr>
+        <td>{{ r.name }}</td>
+        <td><span class="pill">{{ r.category }}</span></td>
+        <td class="text-right mono">₹{{ '{:,.0f}'.format(r.purchase_value) }}</td>
+        <td class="text-right mono">₹{{ '{:,.0f}'.format(r.current_value or 0) }}</td>
+        <td class="text-right mono" style="color: {{ 'var(--green)' if r.gain >= 0 else 'var(--red)' }};">₹{{ '{:,.0f}'.format(r.gain) }}</td>
+        <td>{{ r.term }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Add a purchase value on your equity, mutual fund, gold or real estate holdings to see estimated gains here.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h3>Interest &amp; Deduction-Reference Income (Savings / FD / PPF / NPS)</h3>
+  {% if interest_rows %}
+  <table>
+    <thead><tr><th>Asset</th><th>Category</th><th class="text-right">Rate</th><th class="text-right">Est. Annual Interest</th></tr></thead>
+    <tbody>
+      {% for r in interest_rows %}
+      <tr>
+        <td>{{ r.name }}</td>
+        <td>{{ r.category }}</td>
+        <td class="text-right">{{ r.rate ~ '%' if r.rate else '—' }}</td>
+        <td class="text-right mono">{{ '₹{:,.0f}'.format(r.estimated_annual_interest) if r.estimated_annual_interest else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">Add an interest rate on your bank, FD or PPF holdings to see estimated interest income here.</p>
+  {% endif %}
+</div>
+{% endblock %}

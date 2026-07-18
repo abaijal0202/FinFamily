@@ -1,0 +1,15 @@
+Flask==3.0.3
+Flask-Login==0.6.3
+Flask-SQLAlchemy==3.1.1
+Werkzeug==3.0.3
+python-dotenv==1.0.1
+gunicorn==22.0.0
+# Uncomment the line below if deploying with PostgreSQL instead of SQLite
+# psycopg2-binary==2.9.9
+
+# Statement import (OCR-based PDF parsing — see finfamily/statement_import/)
+# Requires system packages: tesseract-ocr, poppler-utils
+#   sudo apt-get install -y tesseract-ocr poppler-utils
+pytesseract==0.3.13
+pdf2image==1.17.0
+Pillow>=10.0.0

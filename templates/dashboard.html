@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — FinFamily{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ family.name }}</h1>
+    <div class="subtitle">
+      {% if viewed_member %}Viewing {{ viewed_member.name }}'s standalone net worth{% else %}Consolidated family net worth{% endif %}
+      &middot; last refreshed {{ trend[-1].snapshot_date.strftime('%d %b %Y') if trend else 'today' }}
+    </div>
+  </div>
+</div>
+
+<div class="member-toggle">
+  <a href="{{ url_for('dashboard') }}" class="member-chip {{ 'active' if not viewed_member else '' }}">Whole family</a>
+  {% for m in members %}
+    <a href="{{ url_for('dashboard', member=m.id) }}" class="member-chip {{ 'active' if viewed_member and viewed_member.id==m.id else '' }}">{{ m.name }} ({{ m.relationship_label }})</a>
+  {% endfor %}
+</div>
+
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-label">Total Assets</div>
+    <div class="kpi-value">₹{{ '{:,.0f}'.format(total_assets) }}</div>
+  </div>
+  <div class="kpi-card liability">
+    <div class="kpi-label">Total Liabilities</div>
+    <div class="kpi-value negative">₹{{ '{:,.0f}'.format(total_liabilities) }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Net Worth</div>
+    <div class="kpi-value">₹{{ '{:,.0f}'.format(net_worth) }}</div>
+  </div>
+</div>
+
+<div class="charts-grid">
+  <div class="panel">
+    <h3>Net Worth Trend</h3>
+    <canvas id="trendChart" height="220"></canvas>
+  </div>
+  <div class="panel">
+    <h3>Asset Allocation</h3>
+    <canvas id="allocationChart" height="220"></canvas>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:20px;">
+  <h3>Liquidity View</h3>
+  {% set total_liq = liquidity_buckets.values() | sum %}
+  <div class="liquidity-bar">
+    {% for label, val in liquidity_buckets.items() %}
+      {% if total_liq > 0 %}
+      <div class="liquidity-seg-{{ loop.index0 }}" style="width: {{ (val/total_liq*100) if total_liq else 0 }}%;"></div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  <div class="legend-row">
+    {% for label, val in liquidity_buckets.items() %}
+      <span><span class="legend-dot" style="background: {{ ['#B8873B','#1B2A4A','#8B96AC'][loop.index0] }};"></span>{{ label }}: ₹{{ '{:,.0f}'.format(val) }}</span>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+const allocationData = {{ allocation | tojson }};
+const trendData = {{ trend | map(attribute='snapshot_date') | map('string') | list | tojson }};
+const trendValues = {{ trend | map(attribute='net_worth') | list | tojson }};
+
+new Chart(document.getElementById('trendChart'), {
+  type: 'line',
+  data: {
+    labels: trendData,
+    datasets: [{
+      label: 'Net Worth',
+      data: trendValues,
+      borderColor: '#B8873B',
+      backgroundColor: 'rgba(184,135,59,0.12)',
+      fill: true,
+      tension: 0.3,
+      pointRadius: 2,
+    }]
+  },
+  options: {
+    plugins: { legend: { display: false } },
+    scales: { y: { ticks: { callback: (v) => '₹' + v.toLocaleString('en-IN') } } }
+  }
+});
+
+const allocLabels = Object.keys(allocationData);
+const allocValues = Object.values(allocationData);
+new Chart(document.getElementById('allocationChart'), {
+  type: 'doughnut',
+  data: {
+    labels: allocLabels,
+    datasets: [{
+      data: allocValues,
+      backgroundColor: ['#B8873B', '#1B2A4A', '#8B96AC', '#2F6D4F', '#D9B26B', '#A6403A', '#5B6472'],
+    }]
+  },
+  options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+});
+</script>
+{% endblock %}

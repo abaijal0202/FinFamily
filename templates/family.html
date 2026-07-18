@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Family Workspace — FinFamily{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Family Workspace</h1>
+    <div class="subtitle">Manage members, roles and visibility (Sec 6.1 / 7.1 of the BRD)</div>
+  </div>
+</div>
+
+<div class="panel-row">
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Relationship</th><th>Role</th><th>Type</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for m in members %}
+        <tr>
+          <td><strong>{{ m.name }}</strong>{% if m.id == current_user.id %} <span class="pill">You</span>{% endif %}</td>
+          <td>{{ m.relationship_label }}</td>
+          <td><span class="pill">{{ m.role }}</span></td>
+          <td>{{ 'Managed profile' if m.is_managed_profile else 'Self-authenticating' }}</td>
+          <td>{{ 'Active' if m.is_active_member else 'Removed' }}</td>
+          <td class="text-right">
+            {% if current_user.role == 'Owner' and m.id != current_user.id and m.is_active_member %}
+            <form method="POST" action="{{ url_for('remove_member', user_id=m.id) }}" onsubmit="return confirm('Remove this member from the consolidated view?');">
+              <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h3>Invite a Family Member</h3>
+    {% if current_user.role != 'Owner' %}
+      <p class="text-muted">Only the primary user (Owner) can invite or remove members.</p>
+    {% else %}
+    <form method="POST">
+      <div class="field">
+        <label>Name</label>
+        <input type="text" name="name" required>
+      </div>
+      <div class="field">
+        <label>Relationship</label>
+        <select name="relationship_label">
+          <option>Spouse</option>
+          <option>Child</option>
+          <option>Parent</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="field checkbox-field">
+        <input type="checkbox" name="is_managed_profile" id="managed">
+        <label for="managed" style="margin:0;">Non-authenticating dependent (minor / elderly parent without digital access) — FR-FAM-04</label>
+      </div>
+      <div class="field">
+        <label>Email (required unless a managed profile)</label>
+        <input type="email" name="email">
+      </div>
+      <div class="field">
+        <label>Temporary password (if inviting to log in themselves)</label>
+        <input type="text" name="temp_password" placeholder="ChangeMe123!">
+      </div>
+      <div class="field">
+        <label>Role</label>
+        <select name="role">
+          {% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+        </select>
+        <div class="hint">Owner: full control. Contributor: can add/edit assets. Viewer: read-only.</div>
+      </div>
+      <button type="submit" class="btn btn-secondary" style="width:100%;">Add member</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <h3>Privacy Model (NFR-SEC-06 / FR-FAM-05)</h3>
+  <p class="text-muted">Every asset defaults to private. When adding or editing an asset, a member can mark it "Shared with Family" to include it in the consolidated view — otherwise only its owner ever sees it.</p>
+</div>
+{% endblock %}

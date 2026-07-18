@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}FinFamily{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+</head>
+<body>
+{% if current_user.is_authenticated %}
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">₹</span>
+      <span class="brand-name">FinFamily</span>
+    </div>
+    <nav>
+      <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint=='dashboard' else '' }}">Dashboard</a>
+      <a href="{{ url_for('assets_list') }}" class="{{ 'active' if request.endpoint in ['assets_list','add_asset','edit_asset'] else '' }}">Assets &amp; Liabilities</a>
+      <a href="{{ url_for('transactions_list') }}" class="{{ 'active' if request.endpoint=='transactions_list' else '' }}">Transactions</a>
+      <a href="{{ url_for('import_home') }}" class="{{ 'active' if request.endpoint in ['import_home','import_review'] else '' }}">Import Statement</a>
+      <a href="{{ url_for('goals_list') }}" class="{{ 'active' if request.endpoint in ['goals_list','add_goal','edit_goal'] else '' }}">Goals</a>
+      <a href="{{ url_for('tax_reference') }}" class="{{ 'active' if request.endpoint=='tax_reference' else '' }}">Tax Reference</a>
+      <a href="{{ url_for('family_page') }}" class="{{ 'active' if request.endpoint=='family_page' else '' }}">Family Workspace</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="me">
+        <div class="me-name">{{ current_user.name }}</div>
+        <div class="me-role">{{ current_user.role }} &middot; {{ current_user.family.name }}</div>
+      </div>
+      <a href="{{ url_for('logout') }}" class="logout-link">Log out</a>
+    </div>
+  </aside>
+  <main class="content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-stack">
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% else %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-stack flash-stack-auth">
+      {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+  {% block auth_content %}{% endblock %}
+{% endif %}
+</body>
+</html>

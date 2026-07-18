@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if asset else 'Add' }} {{ meta.label }} — FinFamily{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ 'Edit' if asset else 'Add' }} {{ meta.label }}</h1>
+    <div class="subtitle">{{ meta.group }}</div>
+  </div>
+</div>
+
+<div class="panel" style="max-width: 640px;">
+<form method="POST">
+  <div class="form-row">
+    <div class="field">
+      <label>Owner</label>
+      <select name="owner_id">
+        {% for m in members %}
+        <option value="{{ m.id }}" {{ 'selected' if asset and asset.owner_id==m.id else ('selected' if not asset and m.id==current_user.id else '') }}>{{ m.name }} ({{ m.relationship_label }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>{{ 'Institution / Bank / AMC / Broker / Insurer' }}</label>
+      <input type="text" name="institution" value="{{ asset.institution if asset else '' }}">
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Name / Label</label>
+    <input type="text" name="name" required value="{{ asset.name if asset else '' }}"
+      placeholder="{% if category=='BANK' %}e.g. HDFC Savings A/c{% elif category=='MF' %}e.g. Axis Bluechip Fund{% elif category=='EQUITY' %}e.g. Zerodha Demat{% elif category=='PPF' %}e.g. SBI PPF Account{% elif category=='NPS' %}e.g. NPS Tier I{% elif category=='LOAN' %}e.g. HDFC Home Loan{% else %}Enter a name{% endif %}">
+  </div>
+
+  <div class="form-row">
+    <div class="field">
+      <label>{% if category=='LOAN' %}Outstanding Balance (₹){% elif category=='INSURANCE' %}Current Surrender Value (₹, optional){% else %}Current Value (₹){% endif %}</label>
+      <input type="number" step="0.01" name="current_value" required value="{{ asset.current_value if asset else '' }}">
+    </div>
+    {% if category in ['MF','EQUITY','GOLD','REALESTATE'] %}
+    <div class="field">
+      <label>Purchase / Cost Value (₹)</label>
+      <input type="number" step="0.01" name="purchase_value" value="{{ asset.purchase_value if asset else '' }}">
+      <div class="hint">Used to estimate unrealized gain for the Tax Reference view.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if category == 'FD' %}
+  <div class="form-row">
+    <div class="field">
+      <label>Principal (₹)</label>
+      <input type="number" step="0.01" name="principal_or_sum_assured" value="{{ asset.principal_or_sum_assured if asset else '' }}">
+    </div>
+    <div class="field">
+      <label>Interest Rate (% p.a.)</label>
+      <input type="number" step="0.01" name="interest_rate" value="{{ asset.interest_rate if asset else '' }}">
+    </div>
+  </div>
+  <div class="field">
+    <label>Maturity Date</label>
+    <input type="date" name="maturity_date" value="{{ asset.maturity_date if asset else '' }}">
+  </div>
+  {% endif %}
+
+  {% if category == 'PPF' %}
+  <div class="form-row">
+    <div class="field">
+      <label>Opened On</label>
+      <input type="date" name="opened_on" value="{{ asset.opened_on if asset else '' }}">
+      <div class="hint">Used to flag the 15-year maturity window (FR-PPF-04).</div>
+    </div>
+    <div class="field">
+      <label>Current Interest Rate (% p.a.)</label>
+      <input type="number" step="0.01" name="interest_rate" value="{{ asset.interest_rate if asset else '' }}" placeholder="e.g. 7.1">
+    </div>
+  </div>
+  {% endif %}
+
+  {% if category == 'INSURANCE' %}
+  <div class="field">
+    <label>Sum Assured (₹)</label>
+    <input type="number" step="0.01" name="principal_or_sum_assured" value="{{ asset.principal_or_sum_assured if asset else '' }}">
+  </div>
+  <div class="field">
+    <label>Premium Due Date</label>
+    <input type="date" name="maturity_date" value="{{ asset.maturity_date if asset else '' }}">
+    <div class="hint">Reused as the next-premium-due reminder date.</div>
+  </div>
+  {% endif %}
+
+  {% if category == 'LOAN' %}
+  <div class="field">
+    <label>Monthly EMI (₹)</label>
+    <input type="number" step="0.01" name="emi_amount" value="{{ asset.emi_amount if asset else '' }}">
+  </div>
+  {% endif %}
+
+  {% if category == 'NPS' %}
+  <div class="field"><label>Asset-class Split (%) — Equity / Corp Debt / Govt Sec / Alternative</label></div>
+  <div class="form-row">
+    <div class="field"><input type="number" step="0.1" name="nps_equity_pct" placeholder="E %" value="{{ asset.nps_equity_pct if asset else '' }}"></div>
+    <div class="field"><input type="number" step="0.1" name="nps_corp_debt_pct" placeholder="C %" value="{{ asset.nps_corp_debt_pct if asset else '' }}"></div>
+    <div class="field"><input type="number" step="0.1" name="nps_gov_sec_pct" placeholder="G %" value="{{ asset.nps_gov_sec_pct if asset else '' }}"></div>
+    <div class="field"><input type="number" step="0.1" name="nps_alt_pct" placeholder="A %" value="{{ asset.nps_alt_pct if asset else '' }}"></div>
+  </div>
+  {% endif %}
+
+  {% if category == 'BANK' %}
+  <div class="field">
+    <label>Savings Interest Rate (% p.a., optional)</label>
+    <input type="number" step="0.01" name="interest_rate" value="{{ asset.interest_rate if asset else '' }}">
+  </div>
+  {% endif %}
+
+  <div class="field">
+    <label>Account / Reference (last 4 digits, optional)</label>
+    <input type="text" name="account_number_last4" maxlength="10" value="{{ asset.account_number_last4 if asset else '' }}">
+  </div>
+
+  <div class="field">
+    <label>Notes</label>
+    <textarea name="notes" rows="2">{{ asset.notes if asset else '' }}</textarea>
+  </div>
+
+  <div class="field checkbox-field">
+    <input type="checkbox" name="is_private" id="priv" {{ 'checked' if asset and asset.is_private else '' }}>
+    <label for="priv" style="margin:0;">Keep this private (visible only to me) — FR-FAM-05</label>
+  </div>
+
+  <button type="submit" class="btn btn-secondary" style="width:100%;">{{ 'Save changes' if asset else 'Add asset' }}</button>
+</form>
+</div>
+{% endblock %}

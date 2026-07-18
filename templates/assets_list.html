@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Assets & Liabilities — FinFamily{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Assets &amp; Liabilities</h1>
+    <div class="subtitle">Every Indian asset class from the BRD, in one register</div>
+  </div>
+</div>
+
+<div class="category-tabs">
+  <a href="{{ url_for('assets_list') }}" class="{{ 'active' if not active_category else '' }}">All</a>
+  {% for key, meta in categories.items() %}
+  <a href="{{ url_for('assets_list', category=key) }}" class="{{ 'active' if active_category==key else '' }}">{{ meta.label }}</a>
+  {% endfor %}
+</div>
+
+<div class="add-buttons">
+  {% for key, meta in categories.items() %}
+  <a href="{{ url_for('add_asset', category=key) }}">+ Add {{ meta.label }}</a>
+  {% endfor %}
+</div>
+
+{% if assets %}
+<div class="table-card">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th><th>Category</th><th>Owner</th><th>Institution</th>
+        <th class="text-right">Value</th><th>Visibility</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in assets %}
+      <tr>
+        <td><strong>{{ a.name }}</strong>{% if a.notes %}<div class="text-muted" style="font-size:12px;">{{ a.notes[:60] }}</div>{% endif %}</td>
+        <td><span class="pill {{ 'pill-liability' if a.is_liability else '' }}">{{ a.meta.label }}</span></td>
+        <td>{{ a.owner.name }}</td>
+        <td>{{ a.institution or '—' }}</td>
+        <td class="text-right mono">
+          {% if a.is_liability %}-{% endif %}₹{{ '{:,.0f}'.format(a.current_value or 0) }}
+        </td>
+        <td>{{ 'Private' if a.is_private else 'Shared' }}</td>
+        <td class="text-right">
+          <a href="{{ url_for('edit_asset', asset_id=a.id) }}" class="btn btn-outline btn-sm">Edit</a>
+          <form method="POST" action="{{ url_for('delete_asset', asset_id=a.id) }}" style="display:inline;" onsubmit="return confirm('Delete this asset?');">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <h3>No assets yet</h3>
+  <p>Add your first bank account, mutual fund, PPF, NPS or other holding using the buttons above.</p>
+</div>
+{% endif %}
+{% endblock %}

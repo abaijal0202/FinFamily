@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Transactions — FinFamily{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Transactions</h1>
+    <div class="subtitle">Ledger built from confirmed statement imports (BRD Sec 6.4)</div>
+  </div>
+</div>
+
+<div class="category-tabs">
+  <a href="{{ url_for('transactions_list') }}" class="{{ 'active' if not active_asset else '' }}">All accounts</a>
+  {% for a in assets %}
+  <a href="{{ url_for('transactions_list', asset=a.id) }}" class="{{ 'active' if active_asset==a.id else '' }}">{{ a.name }}</a>
+  {% endfor %}
+</div>
+
+{% if transactions %}
+<div class="table-card">
+  <table>
+    <thead>
+      <tr><th>Date</th><th>Account</th><th>Narration</th><th>Category</th><th class="text-right">Amount</th><th class="text-right">Balance</th></tr>
+    </thead>
+    <tbody>
+      {% for t in transactions %}
+      <tr>
+        <td class="mono">{{ t.txn_date.strftime('%d %b %Y') }}</td>
+        <td>{{ t.asset.name }}</td>
+        <td style="max-width:340px;">{{ t.narration }}</td>
+        <td><span class="pill">{{ t.category or 'Uncategorized' }}</span></td>
+        <td class="text-right mono" style="color: {{ 'var(--green)' if t.amount > 0 else 'var(--red)' if t.amount < 0 else 'inherit' }};">
+          {{ '+' if t.amount > 0 else '' }}&#8377;{{ '{:,.2f}'.format(t.amount) }}
+        </td>
+        <td class="text-right mono">{{ '₹{:,.2f}'.format(t.balance_after) if t.balance_after is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <h3>No transactions yet</h3>
+  <p>Import a bank statement to populate your transaction history automatically.</p>
+</div>
+{% endif %}
+{% endblock %}

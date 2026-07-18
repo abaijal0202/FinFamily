@@ -1,0 +1,44 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ---- Virtual environments ----
+venv/
+.venv/
+env/
+ENV/
+
+# ---- Flask / app runtime ----
+.env
+instance/
+*.sock
+*.log
+
+# ---- Databases (financial data, never commit) ----
+*.db
+*.sqlite
+*.sqlite3
+finfamily.db
+
+# ---- Uploaded / imported statements & user data ----
+uploads/
+statements/
+*.pdf
+
+# ---- Redundant archives ----
+*.zip
+
+# ---- Office temp / lock files ----
+~$*
+
+# ---- OS cruft ----
+.DS_Store
+Thumbs.db
+
+# ---- Local-only leftovers from repo setup (safe to delete manually) ----
+finfamily_webapp/
+_probedir/

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Create your workspace — FinFamily{% endblock %}
+{% block auth_content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="brand">
+      <span class="brand-mark">₹</span>
+      <span class="brand-name">FinFamily</span>
+    </div>
+    <div class="auth-tagline">One family. One net worth. Every asset, in one place.</div>
+    <h2>Create your family workspace</h2>
+    <form method="POST">
+      <div class="field">
+        <label>Your full name</label>
+        <input type="text" name="name" required>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" name="email" required>
+      </div>
+      <div class="field">
+        <label>Phone (optional)</label>
+        <input type="tel" name="phone">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" name="password" required minlength="6">
+      </div>
+      <div class="field">
+        <label>Family workspace name</label>
+        <input type="text" name="family_name" placeholder="e.g. The Sharma Family">
+        <div class="hint">You'll be the primary user (Owner) and can invite your spouse, children and parents afterwards.</div>
+      </div>
+      <button type="submit" class="btn btn-primary">Create workspace</button>
+    </form>
+    <div class="auth-switch">Already have an account? <a href="{{ url_for('login') }}">Log in</a></div>
+  </div>
+</div>
+{% endblock %}
