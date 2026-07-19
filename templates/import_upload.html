@@ -8,18 +8,38 @@
   </div>
 </div>
 
+<div class="panel" style="max-width: 560px; margin-bottom: 20px;">
+  <h3 style="font-family:'Fraunces',serif; color:var(--navy); font-size:16px; margin:0 0 8px;">Check Gmail for statements</h3>
+  {% if gmail_on %}
+  <form method="POST" action="{{ url_for('gmail_check') }}" class="js-busy-on-submit">
+    <div class="hint" style="margin-bottom:10px;">
+      Scans your inbox (read-only) for new bank e-statements and CAMS/KFintech CAS emails.
+      CAS holdings are applied to your mutual funds automatically; bank statements appear
+      below for review. Already-processed emails are skipped.
+    </div>
+    <button type="submit" class="btn btn-primary" data-busy-text="Checking Gmail…">Check Gmail now</button>
+  </form>
+  {% else %}
+  <div class="hint">
+    Not configured. Add <code>GMAIL_ADDRESS</code>, <code>GMAIL_APP_PASSWORD</code>
+    (Google App Password) and <code>CAS_PASSWORD</code> to your <code>.env</code> file,
+    then restart the app.
+  </div>
+  {% endif %}
+</div>
+
 <div class="panel" style="max-width: 560px; margin-bottom: 28px;">
-  <form method="POST" action="{{ url_for('import_upload') }}" enctype="multipart/form-data">
+  <form method="POST" action="{{ url_for('import_upload') }}" enctype="multipart/form-data" class="js-busy-on-submit">
     <div class="field">
       <label>Statement PDF</label>
       <input type="file" name="statement" accept="application/pdf" required>
       <div class="hint">
         {% if known_banks %}Statements from {{ known_banks|join(', ') }} use a dedicated, validated parser.{% endif %}
         Any other bank is read with a generic best-effort parser &mdash; review it carefully on the next screen, where every field can be corrected and missing accounts/transactions added by hand.
-        OCR takes ~20&ndash;40s for a multi-page statement &mdash; please wait after submitting.
+        OCR takes ~20&ndash;40s for a multi-page statement &mdash; the button below will show progress, so there's no need to click more than once.
       </div>
     </div>
-    <button type="submit" class="btn btn-primary">Upload &amp; Parse</button>
+    <button type="submit" class="btn btn-primary" data-busy-text="Uploading &amp; parsing your statement… (~20–40s)">Upload &amp; Parse</button>
   </form>
 </div>
 

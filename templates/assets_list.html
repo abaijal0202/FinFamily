@@ -27,7 +27,7 @@
     <thead>
       <tr>
         <th>Name</th><th>Category</th><th>Owner</th><th>Institution</th>
-        <th class="text-right">Value</th><th>Visibility</th><th></th>
+        <th class="text-right">Value</th><th class="text-right">XIRR</th><th>Visibility</th><th></th>
       </tr>
     </thead>
     <tbody>
@@ -39,6 +39,15 @@
         <td>{{ a.institution or '—' }}</td>
         <td class="text-right mono">
           {% if a.is_liability %}-{% endif %}₹{{ '{:,.0f}'.format(a.current_value or 0) }}
+        </td>
+        <td class="text-right">
+          {% if xirr_map and a.id in xirr_map %}
+            {% set pct, approx = xirr_map[a.id] %}
+            <span class="mono" style="color: {{ 'var(--green)' if pct >= 0 else 'var(--red)' }}; font-size:13px;"
+                  title="Annualized return from CAS transaction history{{ ' (approximate: history does not reach inception)' if approx else '' }}">
+              {{ '%+.1f' % pct }}%{{ '~' if approx else '' }}
+            </span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
         </td>
         <td>{{ 'Private' if a.is_private else 'Shared' }}</td>
         <td class="text-right">

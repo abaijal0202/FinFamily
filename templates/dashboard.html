@@ -9,7 +9,25 @@
       &middot; last refreshed {{ trend[-1].snapshot_date.strftime('%d %b %Y') if trend else 'today' }}
     </div>
   </div>
+  <form method="POST" action="{{ url_for('refresh_valuations') }}" class="js-busy-on-submit">
+    <button type="submit" class="btn btn-outline" title="Pull latest AMFI NAVs and revalue holdings" data-busy-text="Refreshing…">&#8635; Refresh valuations</button>
+  </form>
 </div>
+
+{% if alerts %}
+<div class="panel" style="margin-bottom:24px; border-left:4px solid var(--gold);">
+  <h3 style="margin-bottom:12px;">Needs your attention</h3>
+  {% for al in alerts %}
+  <div style="display:flex; gap:10px; align-items:baseline; padding:7px 0; {{ 'border-top:1px solid var(--line);' if not loop.first else '' }}">
+    <span class="pill {{ 'pill-liability' if al.severity=='due' else '' }}" style="flex-shrink:0;">{{ 'Due' if al.severity=='due' else 'Info' }}</span>
+    <div>
+      <strong style="font-size:13.5px;">{{ al.title }}</strong>
+      <div class="text-muted" style="font-size:12.5px;">{{ al.detail }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 <div class="member-toggle">
   <a href="{{ url_for('dashboard') }}" class="member-chip {{ 'active' if not viewed_member else '' }}">Whole family</a>

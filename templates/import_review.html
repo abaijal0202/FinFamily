@@ -101,7 +101,7 @@ function addManualAccount() {
 }
 </script>
 
-<form method="POST" action="{{ url_for('import_confirm', import_id=stmt_import.id) }}">
+<form method="POST" action="{{ url_for('import_confirm', import_id=stmt_import.id) }}" class="js-busy-on-submit">
   {% for acc in stmt_import.accounts %}
   <div class="panel" style="margin-bottom:20px;">
     <div class="form-row" style="align-items:flex-end; margin-bottom:14px;">
@@ -171,7 +171,7 @@ function addManualAccount() {
   </div>
 
   <div style="display:flex; gap:10px;">
-    <button type="submit" class="btn btn-primary" style="width:auto;">Confirm &amp; Add to FinFamily</button>
+    <button type="submit" class="btn btn-primary" style="width:auto;" data-busy-text="Adding to FinFamily…">Confirm &amp; Add to FinFamily</button>
     <a href="{{ url_for('import_home') }}" class="btn btn-outline">Back</a>
   </div>
 </form>

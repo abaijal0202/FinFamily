@@ -6,6 +6,7 @@ from flask import Flask, render_template, redirect, url_for, request, flash, jso
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user
 )
+from flask_migrate import Migrate
 from werkzeug.utils import secure_filename
 
 from config import Config
@@ -15,11 +16,16 @@ from models import (
     StatementImport, ImportedAccount, ImportedTransaction, Transaction,
     TRANSACTION_CATEGORIES, IMPORT_STATUS_PENDING, IMPORT_STATUS_CONFIRMED, IMPORT_STATUS_DISCARDED,
 )
-from statement_import import parse_pdf
-from statement_import.categorize import categorize
 from statement_import.registry import supported_banks
+import valuation
+import gmail_ingest
+from import_service import ingest_bank_pdf, file_sha256, find_existing_import
+from analytics import (
+    compute_alerts, compute_asset_xirr, monthly_cashflow, category_comparison,
+)
 
 login_manager = LoginManager()
+migrate = Migrate()
 
 
 def create_app():
@@ -27,13 +33,14 @@ def create_app():
     app.config.from_object(Config)
 
     db.init_app(app)
+    migrate.init_app(app, db)
     login_manager.init_app(app)
     login_manager.login_view = "login"
 
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
-    with app.app_context():
-        db.create_all()
+    # Schema is managed by Flask-Migrate: run `flask db upgrade` (the
+    # start_finfamily script does this) instead of db.create_all().
 
     register_routes(app)
     return app
@@ -148,20 +155,8 @@ def register_routes(app):
         total_assets, total_liabilities, net_worth = compute_net_worth(assets)
         allocation = group_by_class(assets)
 
-        # take/record a snapshot at most once per day for the trend chart
-        today = date.today()
-        existing = NetWorthSnapshot.query.filter_by(family_id=family.id, snapshot_date=today).first()
-        family_all_assets = visible_assets_query(family.id, current_user) if not member_id else visible_assets_query(family.id, current_user)
-        fa_total, fa_liab, fa_net = compute_net_worth(family_all_assets)
-        if existing:
-            existing.total_assets, existing.total_liabilities, existing.net_worth = fa_total, fa_liab, fa_net
-        else:
-            db.session.add(NetWorthSnapshot(
-                family_id=family.id, snapshot_date=today,
-                total_assets=fa_total, total_liabilities=fa_liab, net_worth=fa_net
-            ))
-        db.session.commit()
-
+        # Snapshots are written by the valuation refresh (startup / Refresh
+        # button), not on every dashboard view — see valuation.snapshot_all_families.
         trend = NetWorthSnapshot.query.filter_by(family_id=family.id).order_by(NetWorthSnapshot.snapshot_date).all()
 
         liquidity_buckets = {"Liquid": 0.0, "Semi-liquid": 0.0, "Locked-in / Illiquid": 0.0}
@@ -179,7 +174,7 @@ def register_routes(app):
             family=family, members=all_members, viewed_member=viewed_member,
             total_assets=total_assets, total_liabilities=total_liabilities, net_worth=net_worth,
             allocation=allocation, trend=trend, liquidity_buckets=liquidity_buckets,
-            categories=ASSET_CATEGORIES,
+            categories=ASSET_CATEGORIES, alerts=compute_alerts(assets),
         )
 
     # ------------------------------------------------------------------ FAMILY
@@ -261,8 +256,15 @@ def register_routes(app):
         if category_filter:
             assets = [a for a in assets if a.category == category_filter]
         assets.sort(key=lambda a: (a.category, a.name))
+        # XIRR per MF asset with cashflow history: {asset_id: (pct, approximate)}
+        xirr_map = {}
+        for a in assets:
+            if a.category == "MF":
+                pct, approx = compute_asset_xirr(a)
+                if pct is not None:
+                    xirr_map[a.id] = (pct, approx)
         return render_template("assets_list.html", assets=assets, categories=ASSET_CATEGORIES,
-                                active_category=category_filter)
+                                active_category=category_filter, xirr_map=xirr_map)
 
     @app.route("/assets/add/<category>", methods=["GET", "POST"])
     @login_required
@@ -291,6 +293,12 @@ def register_routes(app):
                 opened_on=_to_date(request.form.get("opened_on")),
                 maturity_date=_to_date(request.form.get("maturity_date")),
                 emi_amount=_to_float(request.form.get("emi_amount")),
+                units=_to_float(request.form.get("units")),
+                avg_buy_price=_to_float(request.form.get("avg_buy_price")),
+                scheme_code=(request.form.get("scheme_code") or "").strip() or None,
+                isin=(request.form.get("isin") or "").strip() or None,
+                folio_number=(request.form.get("folio_number") or "").strip() or None,
+                ticker=(request.form.get("ticker") or "").strip() or None,
                 nps_equity_pct=_to_float(request.form.get("nps_equity_pct")) or 0.0,
                 nps_corp_debt_pct=_to_float(request.form.get("nps_corp_debt_pct")) or 0.0,
                 nps_gov_sec_pct=_to_float(request.form.get("nps_gov_sec_pct")) or 0.0,
@@ -330,6 +338,12 @@ def register_routes(app):
             asset.opened_on = _to_date(request.form.get("opened_on"))
             asset.maturity_date = _to_date(request.form.get("maturity_date"))
             asset.emi_amount = _to_float(request.form.get("emi_amount"))
+            asset.units = _to_float(request.form.get("units"))
+            asset.avg_buy_price = _to_float(request.form.get("avg_buy_price"))
+            asset.scheme_code = (request.form.get("scheme_code") or "").strip() or None
+            asset.isin = (request.form.get("isin") or "").strip() or None
+            asset.folio_number = (request.form.get("folio_number") or "").strip() or None
+            asset.ticker = (request.form.get("ticker") or "").strip() or None
             asset.nps_equity_pct = _to_float(request.form.get("nps_equity_pct")) or 0.0
             asset.nps_corp_debt_pct = _to_float(request.form.get("nps_corp_debt_pct")) or 0.0
             asset.nps_gov_sec_pct = _to_float(request.form.get("nps_gov_sec_pct")) or 0.0
@@ -449,7 +463,9 @@ def register_routes(app):
     def import_home():
         imports = StatementImport.query.filter_by(family_id=current_user.family_id) \
             .order_by(StatementImport.uploaded_at.desc()).all()
-        return render_template("import_upload.html", imports=imports, known_banks=supported_banks())
+        return render_template("import_upload.html", imports=imports, known_banks=supported_banks(),
+                                gmail_on=gmail_ingest.gmail_configured(),
+                                valuation_status=valuation.last_run)
 
     @app.route("/import/upload", methods=["POST"])
     @login_required
@@ -474,73 +490,66 @@ def register_routes(app):
         stored_path = os.path.join(family_dir, stored_name)
         file.save(stored_path)
 
+        # Duplicate guard: exact same PDF already imported (and not discarded)?
+        file_hash = file_sha256(stored_path)
+        existing = find_existing_import(current_user.family_id, file_hash)
+        if existing:
+            flash(
+                f"This exact statement was already imported on "
+                f"{existing.uploaded_at:%d %b %Y, %H:%M} "
+                f"(status: {existing.status.replace('_', ' ')}) — nothing was imported again. "
+                f"Discard the earlier import first if you really want to redo it.",
+                "error",
+            )
+            return redirect(url_for("import_home"))
+
         try:
-            bank, parsed = parse_pdf(stored_path, dpi=app.config["OCR_DPI"])
+            stmt_import = ingest_bank_pdf(
+                current_user.family_id, current_user.id, stored_path, filename,
+                ocr_dpi=app.config["OCR_DPI"], file_hash=file_hash,
+            )
         except Exception as exc:
+            db.session.rollback()
             flash(f"Could not read that statement: {exc}", "error")
             return redirect(url_for("import_home"))
 
-        stmt_import = StatementImport(
-            family_id=current_user.family_id, uploaded_by_id=current_user.id,
-            bank=bank, original_filename=filename, stored_path=stored_path,
-            status=IMPORT_STATUS_PENDING, warnings="\n".join(parsed.warnings),
-        )
-        db.session.add(stmt_import)
-        db.session.flush()
-
-        existing_assets = Asset.query.filter(
-            Asset.family_id == current_user.family_id, Asset.category.in_(["BANK", "FD"])
-        ).all()
-        by_last4 = {a.account_number_last4: a for a in existing_assets if a.account_number_last4}
-
-        total_txns = 0
-        for acc in parsed.accounts:
-            last4 = acc.account_number[-4:] if acc.account_number else None
-            matched = by_last4.get(last4)
-            imp_acc = ImportedAccount(
-                statement_import_id=stmt_import.id, account_kind="BANK",
-                account_number=acc.account_number, account_number_last4=last4,
-                account_type=acc.account_type, opening_balance=acc.opening_balance,
-                closing_balance=acc.closing_balance, debit_total=acc.debit_total,
-                credit_total=acc.credit_total, matched_asset_id=matched.id if matched else None,
-                suggested_name=f"{bank} Savings ••{last4}" + (f" ({acc.account_type})" if acc.account_type else ""),
-            )
-            db.session.add(imp_acc)
-            db.session.flush()
-
-            for t in acc.transactions:
-                is_dup = False
-                if matched:
-                    is_dup = db.session.query(Transaction.id).filter_by(
-                        asset_id=matched.id, txn_date=t.txn_date,
-                        withdrawal=t.withdrawal, deposit=t.deposit,
-                    ).first() is not None
-                db.session.add(ImportedTransaction(
-                    imported_account_id=imp_acc.id, txn_date=t.txn_date,
-                    narration=(t.narration or "")[:500], withdrawal=t.withdrawal, deposit=t.deposit,
-                    balance_after=t.balance_after, category=categorize(t.narration),
-                    is_duplicate=is_dup, include=not is_dup,
-                ))
-                total_txns += 1
-
-        for fd in parsed.fixed_deposits:
-            last4 = fd.fd_number[-4:] if fd.fd_number else None
-            matched = by_last4.get(last4)
-            db.session.add(ImportedAccount(
-                statement_import_id=stmt_import.id, account_kind="FD",
-                account_number=fd.fd_number, account_number_last4=last4,
-                opening_balance=fd.principal, closing_balance=fd.current_amount,
-                interest_rate=fd.rate, maturity_date=fd.maturity_date,
-                matched_asset_id=matched.id if matched else None,
-                suggested_name=f"{bank} FD ••{last4}",
-            ))
-
-        stmt_import.accounts_found = len(parsed.accounts) + len(parsed.fixed_deposits)
-        stmt_import.transactions_found = total_txns
-        db.session.commit()
-
-        flash(f"Parsed {stmt_import.accounts_found} account(s) and {total_txns} transaction(s). Review before confirming.", "success")
+        flash(f"Parsed {stmt_import.accounts_found} account(s) and {stmt_import.transactions_found} transaction(s). Review before confirming.", "success")
         return redirect(url_for("import_review", import_id=stmt_import.id))
+
+    @app.route("/import/check-gmail", methods=["POST"])
+    @login_required
+    def gmail_check():
+        if not current_user.can_edit:
+            abort(403)
+        if not gmail_ingest.gmail_configured():
+            flash("Gmail is not configured. Add GMAIL_ADDRESS and GMAIL_APP_PASSWORD to your .env file.", "error")
+            return redirect(url_for("import_home"))
+        try:
+            summary = gmail_ingest.check_gmail(app, current_user.family_id, current_user.id)
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"Gmail check failed: {exc}", "error")
+            return redirect(url_for("import_home"))
+
+        parts = [f"{summary['checked']} new statement email(s) examined"]
+        if summary["cas"]:
+            parts.append(f"{len(summary['cas'])} CAS applied to your mutual funds")
+        if summary["bank_imports"]:
+            parts.append(f"{len(summary['bank_imports'])} bank statement(s) staged for review below")
+        if summary["errors"]:
+            parts.append(f"{len(summary['errors'])} error(s): " + "; ".join(summary["errors"][:3]))
+        flash(". ".join(parts) + ".", "error" if summary["errors"] else "success")
+        return redirect(url_for("import_home"))
+
+    @app.route("/refresh-valuations", methods=["POST"])
+    @login_required
+    def refresh_valuations():
+        mf, eq, errors = valuation.run_full_refresh(app)
+        if errors:
+            flash("Refresh finished with issues: " + "; ".join(errors), "error")
+        else:
+            flash(f"Valuations refreshed: {mf} mutual fund(s) and {eq} equity holding(s) updated from latest NAVs/prices.", "success")
+        return redirect(request.referrer or url_for("dashboard"))
 
     @app.route("/import/<int:import_id>/review")
     @login_required
@@ -699,6 +708,23 @@ def register_routes(app):
             q = q.filter(Transaction.asset_id == asset_id)
         txns = q.order_by(Transaction.txn_date.desc(), Transaction.id.desc()).limit(300).all()
         return render_template("transactions.html", transactions=txns, assets=assets, active_asset=asset_id)
+
+    # --------------------------------------------------------------- CASH FLOW
+    @app.route("/cashflow")
+    @login_required
+    def cashflow():
+        family = current_user.family
+        assets = visible_assets_query(family.id, current_user)
+        asset_ids = [a.id for a in assets] or [-1]
+        txns = Transaction.query.filter(
+            Transaction.family_id == family.id,
+            Transaction.asset_id.in_(asset_ids),
+        ).all()
+        months = monthly_cashflow(txns, months=12)
+        cat_rows, this_label, prev_label = category_comparison(txns)
+        return render_template("cashflow.html", months=months, cat_rows=cat_rows,
+                                this_label=this_label, prev_label=prev_label,
+                                has_data=any(m["income"] or m["expense"] for m in months))
 
     # -------------------------------------------------------------- JSON API
     @app.route("/api/dashboard_data")

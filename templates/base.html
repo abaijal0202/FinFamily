@@ -21,6 +21,7 @@
       <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint=='dashboard' else '' }}">Dashboard</a>
       <a href="{{ url_for('assets_list') }}" class="{{ 'active' if request.endpoint in ['assets_list','add_asset','edit_asset'] else '' }}">Assets &amp; Liabilities</a>
       <a href="{{ url_for('transactions_list') }}" class="{{ 'active' if request.endpoint=='transactions_list' else '' }}">Transactions</a>
+      <a href="{{ url_for('cashflow') }}" class="{{ 'active' if request.endpoint=='cashflow' else '' }}">Cash Flow</a>
       <a href="{{ url_for('import_home') }}" class="{{ 'active' if request.endpoint in ['import_home','import_review'] else '' }}">Import Statement</a>
       <a href="{{ url_for('goals_list') }}" class="{{ 'active' if request.endpoint in ['goals_list','add_goal','edit_goal'] else '' }}">Goals</a>
       <a href="{{ url_for('tax_reference') }}" class="{{ 'active' if request.endpoint=='tax_reference' else '' }}">Tax Reference</a>
@@ -59,5 +60,21 @@
   {% endwith %}
   {% block auth_content %}{% endblock %}
 {% endif %}
+<script>
+// Disables a form's submit button and swaps in a spinner + status text the
+// moment it's submitted, so slow requests (OCR, Gmail scan, NAV refresh)
+// give immediate feedback instead of looking unresponsive and inviting
+// repeat clicks / duplicate submissions. Opt in with class="js-busy-on-submit"
+// and put the message in the button's data-busy-text attribute.
+document.querySelectorAll('form.js-busy-on-submit').forEach(function (form) {
+  form.addEventListener('submit', function () {
+    var btn = form.querySelector('button[type="submit"]');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    btn.dataset.originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="btn-spinner"></span>' + (btn.getAttribute('data-busy-text') || 'Working…');
+  });
+});
+</script>
 </body>
 </html>

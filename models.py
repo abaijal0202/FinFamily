@@ -89,6 +89,16 @@ class Asset(db.Model):
     opened_on = db.Column(db.Date)
     maturity_date = db.Column(db.Date)
 
+    # Auto-valuation fields (MF via AMFI NAV, equity via price feed).
+    # current_value = units x latest NAV/price when these are set.
+    units = db.Column(db.Float)                    # MF units held / equity share qty
+    avg_buy_price = db.Column(db.Float)            # per-unit cost basis (optional)
+    scheme_code = db.Column(db.String(20))         # AMFI scheme code (MF)
+    isin = db.Column(db.String(20))                # ISIN (MF/equity), used for CAS matching
+    folio_number = db.Column(db.String(40))        # MF folio, used for CAS matching
+    ticker = db.Column(db.String(20))              # exchange ticker (equity), e.g. INFY.NS
+    last_valued_at = db.Column(db.DateTime)        # when auto-valuation last updated this row
+
     # NPS asset-class split (percent), stored individually for simplicity
     nps_equity_pct = db.Column(db.Float, default=0.0)
     nps_corp_debt_pct = db.Column(db.Float, default=0.0)
@@ -214,6 +224,7 @@ class StatementImport(db.Model):
     bank = db.Column(db.String(40))
     original_filename = db.Column(db.String(255))
     stored_path = db.Column(db.String(500))
+    file_hash = db.Column(db.String(64), index=True)  # SHA-256 of the PDF; duplicate guard
     status = db.Column(db.String(20), default=IMPORT_STATUS_PENDING)
     accounts_found = db.Column(db.Integer, default=0)
     transactions_found = db.Column(db.Integer, default=0)
@@ -266,6 +277,47 @@ class ImportedTransaction(db.Model):
     category = db.Column(db.String(40))
     is_duplicate = db.Column(db.Boolean, default=False)
     include = db.Column(db.Boolean, default=True)
+
+
+class AssetCashflow(db.Model):
+    """One investor cash flow for an MF asset, captured from CAS transactions.
+
+    Sign convention: amount > 0 = money invested (purchase/SIP),
+    amount < 0 = money taken out (redemption). Used for XIRR.
+    A `synthetic` flow represents the opening balance of the earliest CAS
+    period (the statement didn't go back to inception), which makes the
+    computed XIRR approximate.
+    """
+    __tablename__ = "asset_cashflows"
+    id = db.Column(db.Integer, primary_key=True)
+    asset_id = db.Column(db.Integer, db.ForeignKey("assets.id"), nullable=False)
+    flow_date = db.Column(db.Date, nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    units = db.Column(db.Float)
+    nav = db.Column(db.Float)
+    source = db.Column(db.String(20), default="CAS")
+    synthetic = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint("asset_id", "flow_date", "amount", "units",
+                                          name="uq_asset_flow"),)
+
+    asset = db.relationship("Asset", backref="cashflows")
+
+
+class ProcessedEmail(db.Model):
+    """Every Gmail message already examined by the statement ingester, so a
+    re-check never downloads or imports the same statement twice."""
+    __tablename__ = "processed_emails"
+    id = db.Column(db.Integer, primary_key=True)
+    family_id = db.Column(db.Integer, db.ForeignKey("families.id"), nullable=False)
+    message_id = db.Column(db.String(255), nullable=False)  # RFC 822 Message-ID
+    sender = db.Column(db.String(255))
+    subject = db.Column(db.String(500))
+    result = db.Column(db.String(500))  # e.g. "bank pdf -> import #12", "cas: 8 folios", "no pdf"
+    processed_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint("family_id", "message_id", name="uq_family_message"),)
 
 
 class Transaction(db.Model):

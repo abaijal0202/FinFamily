@@ -1,15 +1,25 @@
 Flask==3.0.3
 Flask-Login==0.6.3
 Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.7
 Werkzeug==3.0.3
 python-dotenv==1.0.1
-gunicorn==22.0.0
-# Uncomment the line below if deploying with PostgreSQL instead of SQLite
-# psycopg2-binary==2.9.9
 
-# Statement import (OCR-based PDF parsing — see finfamily/statement_import/)
-# Requires system packages: tesseract-ocr, poppler-utils
-#   sudo apt-get install -y tesseract-ocr poppler-utils
+# Local serving (cross-platform; replaces gunicorn for the Windows local setup)
+waitress==3.0.0
+# gunicorn==22.0.0  # uncomment if deploying to a Linux server instead
+
+# Statement import (OCR-based PDF parsing — see statement_import/)
+# Requires system packages: Tesseract OCR + Poppler (see README "Local setup")
 pytesseract==0.3.13
 pdf2image==1.17.0
 Pillow>=10.0.0
+
+# Mutual fund CAS (CAMS/KFintech) parsing — no OCR needed
+casparser==0.7.4
+
+# Optional: live equity prices for assets with a ticker (heavier install)
+# yfinance==0.2.40
+
+# Uncomment if deploying with PostgreSQL instead of SQLite
+# psycopg2-binary==2.9.9

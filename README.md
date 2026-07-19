@@ -1,67 +1,111 @@
 # FinFamily — Personal & Family Finance Tracker (India)
 
-A working Phase-1 implementation of the FinFamily Business Requirements Document: a
-family-level net worth and financial-planning web application covering every Indian
-asset class named in the BRD.
+A family-level net worth and financial-planning web application covering Indian
+asset classes: Bank, FD, Mutual Funds, Equity, PPF, NPS, EPF, Gold, Real Estate,
+Loans, Insurance. Designed for local, weekly use — start it, it refreshes itself,
+review, close it.
 
 ## What's implemented
 
-| BRD Section | Feature | Where |
-|---|---|---|
-| 6.1 / 7.1 | Family workspace, invite members, roles (Owner/Contributor/Viewer), managed profiles for dependents, per-asset Private/Shared visibility | `/family` |
-| 6.2 / 7.2–7.7 | Manual tracking of Bank, FD, Mutual Funds, Direct Equity/F&O, PPF, NPS (with E/C/G/A split), EPF, Gold, Real Estate, Loans, Insurance | `/assets` |
-| 6.3 / 10.1 | Consolidated + member-wise net worth, asset-allocation donut chart, net-worth trend line, liquidity view | `/dashboard` |
-| 6.5 / 10.2 | Goal-based planning: link assets to a goal, progress bar, shortfall, suggested top-up SIP | `/goals` |
-| 6.7 / 10.5 | Tax-reference view: unrealized gains, estimated interest income (informational only) | `/tax-reference` |
-| 6.10 / NFR-SEC-06 | Default-private asset visibility, per-asset sharing toggle | throughout |
+| Feature | Where |
+|---|---|
+| Family workspace, roles (Owner/Contributor/Viewer), managed profiles, per-asset Private/Shared visibility | `/family` |
+| Manual tracking of every asset class, with liabilities netted into net worth | `/assets` |
+| Consolidated + member-wise net worth, allocation chart, trend line, liquidity view | `/dashboard` |
+| Goal-based planning: linked assets, progress, shortfall, suggested top-up SIP | `/goals` |
+| Tax-reference view: unrealized gains, estimated interest income | `/tax-reference` |
+| **Bank statement PDF import** (OCR, HDFC parser + generic fallback, review-before-confirm) | `/import` |
+| **Gmail auto-ingestion**: scans your inbox (read-only IMAP) for bank e-statements and CAS emails | `/import` → Check Gmail |
+| **CAS import** (CAMS/KFintech consolidated MF statement): folios applied to MF assets automatically | via Gmail check |
+| **NAV auto-valuation**: MF values refreshed from AMFI's daily NAV file on every app start (units × NAV) | startup + Refresh button |
 
-**Not implemented in this build** (out of scope for a demo/MVP without the paid
-registrations and licensing the BRD itself calls out — RBI Account Aggregator FIU
-status, CAS/CRA statement parsing, and broker API integration): live data pulls
-from banks/AMCs/brokers/CRA. All holdings are entered manually, exactly as the BRD's
-own "Fallback" column specifies for Phase 1. The data model (`models.py`) is
-structured so those integrations can be added later without a schema rework —
-each asset already carries the fields (folio/PRAN-style institution reference,
-NAV-style current value, cost basis) those feeds would populate.
+## Run locally (Windows — the intended setup)
+
+1. Install [Python 3.11+](https://www.python.org/downloads/) (tick "Add to PATH").
+2. Double-click **`start_finfamily.bat`**. First run creates the venv, installs
+   dependencies, sets up the database, and opens your browser at
+   `http://127.0.0.1:8000`. Close the window to stop.
+3. Edit `.env` (created from `.env.example` on first run):
+   - `SECRET_KEY` — any long random string
+   - `GMAIL_ADDRESS` + `GMAIL_APP_PASSWORD` — for statement auto-ingestion
+     (Google Account → Security → 2-Step Verification → App passwords)
+   - `CAS_PASSWORD` — the password on your CAMS/KFintech CAS PDFs (usually PAN)
+
+**For bank-statement PDF import only** (CAS + NAV refresh work without these):
+
+- [Tesseract OCR for Windows](https://github.com/UB-Mannheim/tesseract/wiki)
+- [Poppler for Windows](https://github.com/oschwartz10612/poppler-windows/releases)
+  — unzip and add its `Library\bin` to PATH
+
+The start script warns if either is missing.
+
+### Linux / manual run
+
+```bash
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env            # edit at minimum SECRET_KEY
+export FLASK_APP=app.py
+flask db upgrade                # creates/migrates the database
+python3 serve.py
+```
+
+## Weekly workflow
+
+1. Double-click `start_finfamily.bat`.
+2. On startup the app automatically: pulls the latest AMFI NAV file (cached 6h),
+   revalues every MF holding with a scheme code + units, and records today's
+   net-worth snapshot.
+3. On the Import page, click **Check Gmail now**: new CAS emails update your
+   mutual funds directly; new bank e-statements are OCR'd and staged for review.
+4. Review anything pending, check the dashboard, close the window.
+
+## Database migrations
+
+Schema changes are managed with Flask-Migrate (Alembic). The start script runs
+`flask db upgrade` automatically. After changing `models.py`:
+
+```bash
+flask db migrate -m "describe the change"
+flask db upgrade
+```
+
+## Tests
+
+```bash
+pip install pytest
+pytest tests/
+```
+
+Covers net-worth math, transaction categorization, the HDFC parser (against
+synthetic OCR text), AMFI NAV parsing, and CAS-to-asset matching. GitHub Actions
+runs the suite on every push (`.github/workflows/ci.yml`).
 
 ## Tech stack
 
-- **Backend:** Python 3 / Flask, Flask-Login (auth), Flask-SQLAlchemy (ORM)
-- **Database:** SQLite by default (file-based, zero setup); swap to PostgreSQL by
-  setting `DATABASE_URL` — see `.env.example`
-- **Frontend:** Server-rendered Jinja2 templates, Chart.js for the dashboard charts,
-  no build step required
-- **WSGI server for production:** Gunicorn (see `DEPLOY_GCP.md`)
-
-## Run locally
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env          # edit SECRET_KEY at minimum
-export $(cat .env | xargs)    # or use python-dotenv, already a dependency
-python3 app.py
-```
-
-Visit `http://localhost:5000`, register the first user (becomes the family's
-primary user / Owner), and start adding accounts under **Assets & Liabilities**.
-
-## Deploying
-
-See `DEPLOY_GCP.md` for a full step-by-step guide to deploying this on a Google
-Cloud Platform Compute Engine VM (Ubuntu) with Gunicorn, Nginx, systemd and HTTPS.
+- **Backend:** Python 3 / Flask, Flask-Login, Flask-SQLAlchemy, Flask-Migrate
+- **Database:** SQLite (file-based, zero setup); PostgreSQL via `DATABASE_URL`
+- **Server:** waitress (cross-platform; gunicorn optional for Linux)
+- **Frontend:** server-rendered Jinja2 + Chart.js, no build step
+- **Statement parsing:** Tesseract OCR + pdf2image (bank PDFs), casparser (CAS)
+- **Valuation:** AMFI NAVAll.txt (free, public); optional yfinance for equity tickers
 
 ## Project structure
 
 ```
-finfamily/
-├── app.py                # routes / application factory
-├── models.py             # SQLAlchemy models (Family, User, Asset, Goal, NetWorthSnapshot)
-├── config.py             # env-driven configuration
-├── wsgi.py               # gunicorn entrypoint
-├── requirements.txt
-├── .env.example
-├── templates/            # Jinja2 templates
-└── static/css, static/js
+FinFamily/
+├── app.py                  # routes / application factory
+├── models.py               # SQLAlchemy models
+├── config.py               # env-driven configuration
+├── valuation.py            # AMFI NAV refresh + net-worth snapshots
+├── gmail_ingest.py         # IMAP statement fetcher
+├── import_service.py       # shared bank-PDF ingestion (web upload + Gmail)
+├── serve.py                # local server entrypoint (waitress)
+├── start_finfamily.bat     # Windows one-click start
+├── wsgi.py                 # gunicorn entrypoint (Linux deploys)
+├── migrations/             # Alembic database migrations
+├── statement_import/       # OCR + bank parser plugins + CAS import
+├── tests/                  # pytest suite
+├── templates/  static/     # UI
+└── docs/                   # BRD, deployment guides, automation roadmap
 ```
