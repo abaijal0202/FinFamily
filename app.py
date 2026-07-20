@@ -720,6 +720,40 @@ def register_routes(app):
         flash("Import removed from history.", "success")
         return redirect(url_for("import_home"))
 
+    @app.route("/import/delete-selected", methods=["POST"])
+    @login_required
+    def import_delete_selected():
+        """Bulk-remove pending/discarded imports selected via checkboxes.
+        Confirmed imports are skipped (their transactions are in the ledger)."""
+        if not current_user.can_edit:
+            abort(403)
+        ids = request.form.getlist("import_ids", type=int)
+        if not ids:
+            flash("No imports selected.", "error")
+            return redirect(url_for("import_home"))
+        rows = StatementImport.query.filter(
+            StatementImport.id.in_(ids),
+            StatementImport.family_id == current_user.family_id,
+            StatementImport.status != IMPORT_STATUS_CONFIRMED,
+        ).all()
+        deleted = 0
+        for imp in rows:
+            stored = imp.stored_path
+            db.session.delete(imp)
+            deleted += 1
+            if stored and os.path.exists(stored):
+                try:
+                    os.remove(stored)
+                except OSError:
+                    pass
+        db.session.commit()
+        skipped = len(ids) - deleted
+        msg = f"Removed {deleted} import(s) from history."
+        if skipped:
+            msg += f" {skipped} confirmed import(s) were skipped — their transactions are in your ledger."
+        flash(msg, "success")
+        return redirect(url_for("import_home"))
+
     # --------------------------------------------------------- IMPORT SETTINGS
     @app.route("/import/settings")
     @login_required

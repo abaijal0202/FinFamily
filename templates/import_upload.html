@@ -46,44 +46,89 @@
 
 <h3 style="font-family:'Fraunces',serif; color:var(--navy); font-size:17px; margin-bottom:12px;">Import History</h3>
 {% if imports %}
-<div class="table-card">
-  <table>
-    <thead>
-      <tr><th>Uploaded</th><th>Source</th><th>Bank</th><th>File</th><th>Accounts</th><th>Transactions</th><th>Status</th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for imp in imports %}
-      <tr>
-        <td>{{ imp.uploaded_at.strftime('%d %b %Y, %H:%M') }}</td>
-        <td>
-          {% if imp.source == 'gmail' %}
-            <span class="pill">Gmail</span>
-            {% if imp.email_date %}<div class="text-muted" style="font-size:11.5px; margin-top:3px;">email: {{ imp.email_date.strftime('%d %b %Y') }}</div>{% endif %}
-          {% else %}
-            <span class="pill">Upload</span>
-          {% endif %}
-        </td>
-        <td>{{ imp.bank or '—' }}</td>
-        <td>{{ imp.original_filename }}</td>
-        <td>{{ imp.accounts_found }}</td>
-        <td>{{ imp.transactions_found }}</td>
-        <td><span class="pill {{ 'pill-liability' if imp.status=='discarded' else '' }}">{{ imp.status.replace('_',' ') }}</span></td>
-        <td class="text-right" style="white-space:nowrap;">
-          {% if imp.status == 'pending_review' %}
-          <a href="{{ url_for('import_review', import_id=imp.id) }}" class="btn btn-outline btn-sm">Review</a>
-          {% endif %}
-          {% if imp.status != 'confirmed' %}
-          <form method="POST" action="{{ url_for('import_delete', import_id=imp.id) }}" style="display:inline;"
-                onsubmit="return confirm('Permanently remove this import from history? Nothing was added to your assets, and the stored PDF copy is also deleted.');">
-            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+{% set deletable = imports | rejectattr('status', 'equalto', 'confirmed') | list %}
+<form method="POST" action="{{ url_for('import_delete_selected') }}" id="bulkDeleteForm"
+      onsubmit="return confirmBulkDelete();">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:12px; flex-wrap:wrap;">
+    <div class="text-muted" style="font-size:12.5px;">
+      Tick pending or discarded imports to remove them. Confirmed imports can't be selected — their transactions are already in your ledger.
+    </div>
+    <button type="submit" class="btn btn-danger btn-sm" id="bulkDeleteBtn" disabled>
+      Delete selected (<span id="selCount">0</span>)
+    </button>
+  </div>
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:34px;"><input type="checkbox" id="selectAll" title="Select all deletable" style="width:auto;"></th>
+          <th>Uploaded</th><th>Source</th><th>Bank</th><th>File</th><th>Accounts</th><th>Transactions</th><th>Status</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for imp in imports %}
+        <tr>
+          <td>
+            {% if imp.status != 'confirmed' %}
+            <input type="checkbox" class="row-check" name="import_ids" value="{{ imp.id }}" style="width:auto;">
+            {% endif %}
+          </td>
+          <td>{{ imp.uploaded_at.strftime('%d %b %Y, %H:%M') }}</td>
+          <td>
+            {% if imp.source == 'gmail' %}
+              <span class="pill">Gmail</span>
+              {% if imp.email_date %}<div class="text-muted" style="font-size:11.5px; margin-top:3px;">email: {{ imp.email_date.strftime('%d %b %Y') }}</div>{% endif %}
+            {% else %}
+              <span class="pill">Upload</span>
+            {% endif %}
+          </td>
+          <td>{{ imp.bank or '—' }}</td>
+          <td>{{ imp.original_filename }}</td>
+          <td>{{ imp.accounts_found }}</td>
+          <td>{{ imp.transactions_found }}</td>
+          <td><span class="pill {{ 'pill-liability' if imp.status=='discarded' else '' }}">{{ imp.status.replace('_',' ') }}</span></td>
+          <td class="text-right">
+            {% if imp.status == 'pending_review' %}
+            <a href="{{ url_for('import_review', import_id=imp.id) }}" class="btn btn-outline btn-sm">Review</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+<script>
+(function () {
+  var selectAll = document.getElementById('selectAll');
+  var checks = Array.prototype.slice.call(document.querySelectorAll('.row-check'));
+  var btn = document.getElementById('bulkDeleteBtn');
+  var count = document.getElementById('selCount');
+
+  function refresh() {
+    var n = checks.filter(function (c) { return c.checked; }).length;
+    count.textContent = n;
+    btn.disabled = n === 0;
+    if (selectAll) selectAll.checked = n > 0 && n === checks.length;
+  }
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      checks.forEach(function (c) { c.checked = selectAll.checked; });
+      refresh();
+    });
+  }
+  checks.forEach(function (c) { c.addEventListener('change', refresh); });
+  refresh();
+})();
+
+function confirmBulkDelete() {
+  var n = document.querySelectorAll('.row-check:checked').length;
+  if (n === 0) return false;
+  return confirm('Permanently remove ' + n + ' selected import(s) from history? '
+    + 'Nothing was added to your assets, and the stored PDF copies are also deleted.');
+}
+</script>
 {% else %}
 <div class="empty-state">
   <h3>No statements imported yet</h3>
