@@ -699,14 +699,15 @@ def register_routes(app):
     @app.route("/import/<int:import_id>/delete", methods=["POST"])
     @login_required
     def import_delete(import_id):
-        """Permanently remove a DISCARDED import from history (record + its
-        parsed accounts/transactions + the stored PDF). Confirmed imports
-        can't be deleted — they're the audit trail for ledger entries."""
+        """Permanently remove a pending or discarded import from history
+        (record + its parsed accounts/transactions + the stored PDF).
+        Confirmed imports can't be deleted — they're the audit trail for
+        ledger entries already added to your assets."""
         stmt_import = StatementImport.query.filter_by(id=import_id, family_id=current_user.family_id).first_or_404()
         if not current_user.can_edit:
             abort(403)
-        if stmt_import.status != IMPORT_STATUS_DISCARDED:
-            flash("Only discarded imports can be deleted. Discard it first.", "error")
+        if stmt_import.status == IMPORT_STATUS_CONFIRMED:
+            flash("Confirmed imports can't be deleted — their transactions are already in your ledger.", "error")
             return redirect(url_for("import_home"))
         stored = stmt_import.stored_path
         db.session.delete(stmt_import)  # cascades to ImportedAccount/ImportedTransaction

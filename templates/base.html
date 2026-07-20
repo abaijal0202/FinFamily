@@ -75,6 +75,22 @@ document.querySelectorAll('form.js-busy-on-submit').forEach(function (form) {
     btn.innerHTML = '<span class="btn-spinner"></span>' + (btn.getAttribute('data-busy-text') || 'Working…');
   });
 });
+
+// Keep the scroll position across POST -> redirect actions (delete, discard,
+// remove member, ...): the browser reloads the page at the top, so save the
+// position on submit and restore it if we land back on the same page.
+document.addEventListener('submit', function () {
+  try {
+    sessionStorage.setItem('ff_scroll', JSON.stringify({ p: location.pathname, y: window.scrollY }));
+  } catch (e) {}
+});
+window.addEventListener('DOMContentLoaded', function () {
+  try {
+    var saved = JSON.parse(sessionStorage.getItem('ff_scroll') || 'null');
+    sessionStorage.removeItem('ff_scroll');
+    if (saved && saved.p === location.pathname) window.scrollTo(0, saved.y);
+  } catch (e) {}
+});
 </script>
 </body>
 </html>

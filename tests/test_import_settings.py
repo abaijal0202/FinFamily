@@ -21,7 +21,7 @@ def _make_import(family_id, user_id, status, **kw):
 
 # ------------------------------------------------- delete discarded imports
 
-def test_delete_only_discarded(app, family_and_user):
+def test_delete_pending_and_discarded_but_not_confirmed(app, family_and_user):
     family, user = family_and_user
     c = _login_client(app)
 
@@ -29,17 +29,20 @@ def test_delete_only_discarded(app, family_and_user):
     confirmed = _make_import(family.id, user.id, IMPORT_STATUS_CONFIRMED)
     discarded = _make_import(family.id, user.id, IMPORT_STATUS_DISCARDED)
 
-    # pending and confirmed are refused
-    for imp in (pending, confirmed):
-        r = c.post(f"/import/{imp.id}/delete", follow_redirects=True)
-        assert b"Only discarded imports can be deleted" in r.data
+    # confirmed is refused (its transactions live in the ledger)
+    r = c.post(f"/import/{confirmed.id}/delete", follow_redirects=True)
+    assert b"already in your ledger" in r.data
     assert StatementImport.query.count() == 3
 
-    # discarded is removed
+    # pending deletes directly — no discard step needed
+    r = c.post(f"/import/{pending.id}/delete", follow_redirects=True)
+    assert b"removed from history" in r.data
+    assert db.session.get(StatementImport, pending.id) is None
+
+    # discarded deletes too
     r = c.post(f"/import/{discarded.id}/delete", follow_redirects=True)
     assert b"removed from history" in r.data
-    assert StatementImport.query.count() == 2
-    assert db.session.get(StatementImport, discarded.id) is None
+    assert StatementImport.query.count() == 1  # only confirmed remains
 
 
 # ------------------------------------------------- source + email date

@@ -72,9 +72,9 @@
           {% if imp.status == 'pending_review' %}
           <a href="{{ url_for('import_review', import_id=imp.id) }}" class="btn btn-outline btn-sm">Review</a>
           {% endif %}
-          {% if imp.status == 'discarded' %}
+          {% if imp.status != 'confirmed' %}
           <form method="POST" action="{{ url_for('import_delete', import_id=imp.id) }}" style="display:inline;"
-                onsubmit="return confirm('Permanently remove this discarded import from history? The stored PDF copy is also deleted.');">
+                onsubmit="return confirm('Permanently remove this import from history? Nothing was added to your assets, and the stored PDF copy is also deleted.');">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
           </form>
           {% endif %}
