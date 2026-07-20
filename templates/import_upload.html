@@ -6,6 +6,7 @@
     <h1>Import Bank Statement</h1>
     <div class="subtitle">Upload a PDF statement — we OCR and parse it, then let you review before anything is added (Sec 8 fallback path)</div>
   </div>
+  <a href="{{ url_for('import_settings') }}" class="btn btn-outline">&#9881; Import Settings</a>
 </div>
 
 <div class="panel" style="max-width: 560px; margin-bottom: 20px;">
@@ -48,20 +49,34 @@
 <div class="table-card">
   <table>
     <thead>
-      <tr><th>Uploaded</th><th>Bank</th><th>File</th><th>Accounts</th><th>Transactions</th><th>Status</th><th></th></tr>
+      <tr><th>Uploaded</th><th>Source</th><th>Bank</th><th>File</th><th>Accounts</th><th>Transactions</th><th>Status</th><th></th></tr>
     </thead>
     <tbody>
       {% for imp in imports %}
       <tr>
         <td>{{ imp.uploaded_at.strftime('%d %b %Y, %H:%M') }}</td>
+        <td>
+          {% if imp.source == 'gmail' %}
+            <span class="pill">Gmail</span>
+            {% if imp.email_date %}<div class="text-muted" style="font-size:11.5px; margin-top:3px;">email: {{ imp.email_date.strftime('%d %b %Y') }}</div>{% endif %}
+          {% else %}
+            <span class="pill">Upload</span>
+          {% endif %}
+        </td>
         <td>{{ imp.bank or '—' }}</td>
         <td>{{ imp.original_filename }}</td>
         <td>{{ imp.accounts_found }}</td>
         <td>{{ imp.transactions_found }}</td>
         <td><span class="pill {{ 'pill-liability' if imp.status=='discarded' else '' }}">{{ imp.status.replace('_',' ') }}</span></td>
-        <td class="text-right">
+        <td class="text-right" style="white-space:nowrap;">
           {% if imp.status == 'pending_review' %}
           <a href="{{ url_for('import_review', import_id=imp.id) }}" class="btn btn-outline btn-sm">Review</a>
+          {% endif %}
+          {% if imp.status == 'discarded' %}
+          <form method="POST" action="{{ url_for('import_delete', import_id=imp.id) }}" style="display:inline;"
+                onsubmit="return confirm('Permanently remove this discarded import from history? The stored PDF copy is also deleted.');">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
           {% endif %}
         </td>
       </tr>

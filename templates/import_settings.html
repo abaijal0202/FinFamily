@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Import Settings — FinFamily{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Import Settings</h1>
+    <div class="subtitle">Which senders the Gmail scan watches, attachment passwords, and what happened on recent scans</div>
+  </div>
+  <a href="{{ url_for('import_home') }}" class="btn btn-outline">&larr; Back to Import</a>
+</div>
+
+{% if not gmail_on %}
+<div class="panel" style="border-left:4px solid var(--red); margin-bottom:20px;">
+  <div style="font-size:13.5px;">Gmail is not connected — add <code>GMAIL_ADDRESS</code> and <code>GMAIL_APP_PASSWORD</code> to <code>.env</code> and restart. These settings still save and will apply once Gmail works.</div>
+</div>
+{% endif %}
+
+<div class="panel-row">
+  <div class="panel">
+    <h3>Watched Senders</h3>
+    <div class="hint" style="margin-bottom:12px;">
+      Emails from these addresses/domains are scanned for statement PDFs, in addition to the
+      built-in list. Add an attachment password if that sender's PDFs are protected —
+      e.g. your PAN for CAMS/KFintech CAS mails, or a bank's e-statement password.
+    </div>
+
+    {% if senders %}
+    <table style="margin-bottom:16px;">
+      <thead><tr><th>Sender / Domain</th><th>Password</th><th>Notes</th><th></th></tr></thead>
+      <tbody>
+        {% for s in senders %}
+        <tr>
+          <td class="mono" style="font-size:13px;">{{ s.email }}</td>
+          <td>{{ '••••••' if s.attachment_password else '—' }}</td>
+          <td class="text-muted" style="font-size:12.5px;">{{ s.notes or '' }}</td>
+          <td class="text-right">
+            <form method="POST" action="{{ url_for('scan_sender_delete', sender_id=s.id) }}" style="display:inline;"
+                  onsubmit="return confirm('Remove this sender?');">
+              <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-muted" style="font-size:13px; margin-bottom:16px;">No custom senders yet — only the built-in list is scanned.</div>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('scan_sender_add') }}">
+      <div class="form-row">
+        <div class="field" style="flex:2;">
+          <label>Email address or domain</label>
+          <input type="text" name="email" placeholder="e.g. donotreply@camsonline.com or camsonline.com" required>
+        </div>
+        <div class="field" style="flex:1;">
+          <label>Attachment password (optional)</label>
+          <input type="password" name="attachment_password" placeholder="e.g. your PAN">
+        </div>
+      </div>
+      <div class="field">
+        <label>Notes (optional)</label>
+        <input type="text" name="notes" placeholder="e.g. CAMS CAS monthly email">
+      </div>
+      <button type="submit" class="btn btn-secondary">Add sender</button>
+    </form>
+
+    <div class="hint" style="margin-top:16px;">
+      <strong>Built-in senders (always scanned):</strong> {{ default_senders | join(', ') }}
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Recent Scan Results</h3>
+    <div class="hint" style="margin-bottom:12px;">
+      Every examined email and what happened to it. If a statement failed here (wrong
+      password, unrecognized format), fix the cause, then clear the scan history —
+      the next check re-examines everything, and already-imported PDFs are still
+      skipped by the duplicate guard.
+    </div>
+    <form method="POST" action="{{ url_for('scan_history_clear') }}" style="margin-bottom:14px;"
+          onsubmit="return confirm('Clear scan history? The next Gmail check will re-examine all statement emails in the search window.');">
+      <button type="submit" class="btn btn-outline btn-sm">&#8634; Clear scan history &amp; re-scan next check</button>
+    </form>
+
+    {% if recent_scans %}
+    <div style="max-height: 480px; overflow-y:auto;">
+    <table>
+      <thead><tr><th>When</th><th>From / Subject</th><th>Result</th></tr></thead>
+      <tbody>
+        {% for p in recent_scans %}
+        <tr>
+          <td style="white-space:nowrap; font-size:12.5px;">{{ p.processed_at.strftime('%d %b, %H:%M') }}</td>
+          <td style="font-size:12.5px;">
+            <div>{{ p.sender[:60] }}</div>
+            <div class="text-muted" style="font-size:11.5px;">{{ (p.subject or '')[:80] }}</div>
+          </td>
+          <td style="font-size:12.5px; {{ 'color:var(--red);' if p.result and p.result.startswith('error') else '' }}">{{ p.result }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="text-muted" style="font-size:13px;">No scans yet — run "Check Gmail now" on the Import page.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

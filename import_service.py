@@ -70,7 +70,7 @@ def backfill_hashes_and_discard_duplicates():
 
 
 def ingest_bank_pdf(family_id, user_id, stored_path, original_filename, ocr_dpi=300,
-                    file_hash=None):
+                    file_hash=None, source="upload", email_date=None):
     """Parse a bank statement PDF and stage it for review.
 
     Returns the pending StatementImport. Raises ValueError if the PDF can't
@@ -82,6 +82,7 @@ def ingest_bank_pdf(family_id, user_id, stored_path, original_filename, ocr_dpi=
         family_id=family_id, uploaded_by_id=user_id,
         bank=bank, original_filename=original_filename, stored_path=stored_path,
         file_hash=file_hash or file_sha256(stored_path),
+        source=source, email_date=email_date,
         status=IMPORT_STATUS_PENDING, warnings="\n".join(parsed.warnings),
     )
     db.session.add(stmt_import)

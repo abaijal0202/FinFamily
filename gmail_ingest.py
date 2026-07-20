@@ -24,14 +24,22 @@ import email.utils
 import imaplib
 import os
 import re
+import threading
 from datetime import datetime, timedelta
 
-from models import db, ProcessedEmail
+from models import db, ProcessedEmail, ScanSender
+
+# Only one Gmail check may run at a time (prevents duplicate ProcessedEmail
+# inserts when a second check starts while the first is still working).
+_check_lock = threading.Lock()
 
 # Senders that commonly deliver Indian bank e-statements and MF CAS mails.
+# Deliberately narrow: nsdl.com is NOT here — evoting@nsdl.com sends ballot
+# notices with PDF attachments that are not statements.
 DEFAULT_SENDERS = [
     "camsonline.com",        # CAMS CAS
     "kfintech.com",          # KFintech CAS
+    "nsdl.co.in",            # NSDL e-CAS (depository CAS)
     "hdfcbank.net",          # HDFC e-statements
     "hdfcbank.com",
     "icicibank.com",
@@ -42,15 +50,29 @@ DEFAULT_SENDERS = [
 SUBJECT_KEYWORDS = ["statement", "consolidated account", "cas "]
 
 
-def _config(app):
+def _config(app, family_id=None):
+    """Env config merged with the family's Import Settings (ScanSender rows).
+
+    sender_passwords: list of (sender_fragment_lower, password) — tried for
+    password-protected attachments from that sender, before CAS_PASSWORD.
+    """
+    db_senders, sender_passwords = [], []
+    if family_id is not None:
+        for s in ScanSender.query.filter_by(family_id=family_id, active=True).all():
+            frag = (s.email or "").strip().lower()
+            if frag:
+                db_senders.append(frag)
+                if s.attachment_password:
+                    sender_passwords.append((frag, s.attachment_password))
     return {
         "address": os.environ.get("GMAIL_ADDRESS", ""),
         "app_password": os.environ.get("GMAIL_APP_PASSWORD", ""),
         "cas_password": os.environ.get("CAS_PASSWORD", ""),
         "days": int(os.environ.get("GMAIL_SEARCH_DAYS", "90")),
-        "senders": DEFAULT_SENDERS + [
+        "senders": DEFAULT_SENDERS + db_senders + [
             s.strip().lower() for s in os.environ.get("GMAIL_SENDERS", "").split(",") if s.strip()
         ],
+        "sender_passwords": sender_passwords,
     }
 
 
@@ -94,10 +116,19 @@ def check_gmail(app, family_id, user_id):
     Returns a summary dict: {"checked": n, "bank_imports": [...], "cas": [...],
     "errors": [...]}. Raises RuntimeError if Gmail is not configured.
     """
-    cfg = _config(app)
+    cfg = _config(app, family_id=family_id)
     if not cfg["address"] or not cfg["app_password"]:
         raise RuntimeError("Gmail is not configured — set GMAIL_ADDRESS and GMAIL_APP_PASSWORD in .env")
 
+    if not _check_lock.acquire(blocking=False):
+        raise RuntimeError("A Gmail check is already running — wait for it to finish, then refresh the page.")
+    try:
+        return _check_gmail_locked(app, family_id, user_id, cfg)
+    finally:
+        _check_lock.release()
+
+
+def _check_gmail_locked(app, family_id, user_id, cfg):
     summary = {"checked": 0, "bank_imports": [], "cas": [], "errors": []}
 
     inbox_dir = os.path.join(app.config["UPLOAD_FOLDER"], str(family_id), "gmail")
@@ -115,18 +146,30 @@ def check_gmail(app, family_id, user_id):
         known = {p.message_id for p in ProcessedEmail.query.filter_by(family_id=family_id).all()}
 
         for num in msg_nums:
-            _typ, header_data = conn.fetch(num, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM SUBJECT)])")
+            _typ, header_data = conn.fetch(num, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM SUBJECT DATE)])")
             if not header_data or not header_data[0]:
                 continue
             headers = email.message_from_bytes(header_data[0][1])
             message_id = (headers.get("Message-ID") or "").strip()
             sender = _decode(headers.get("From"))
             subject = _decode(headers.get("Subject"))
+            email_date = None
+            try:
+                dt = email.utils.parsedate_to_datetime(headers.get("Date"))
+                if dt is not None:
+                    email_date = dt.replace(tzinfo=None) if dt.tzinfo is None \
+                        else dt.astimezone(tz=None).replace(tzinfo=None)
+            except (TypeError, ValueError):
+                pass
 
             if not message_id or message_id in known:
                 continue
             if not _matches(sender, subject, cfg):
                 continue
+
+            # Sender-specific attachment password from Import Settings, if any
+            sender_l = sender.lower()
+            sender_pw = next((pw for frag, pw in cfg["sender_passwords"] if frag in sender_l), None)
 
             _typ, full_data = conn.fetch(num, "(BODY.PEEK[])")
             if not full_data or not full_data[0]:
@@ -141,17 +184,24 @@ def check_gmail(app, family_id, user_id):
                 with open(stored, "wb") as f:
                     f.write(payload)
                 try:
-                    results.append(_route_pdf(app, family_id, user_id, stored, fname, cfg))
+                    results.append(_route_pdf(app, family_id, user_id, stored, fname, cfg,
+                                              email_date=email_date, sender_pw=sender_pw))
                 except Exception as exc:
                     msg_txt = f"{fname}: {exc}"
                     summary["errors"].append(msg_txt)
                     results.append(f"error: {msg_txt}")
 
-            db.session.add(ProcessedEmail(
-                family_id=family_id, message_id=message_id, sender=sender[:255],
-                subject=subject[:500], result="; ".join(results)[:500] or "no pdf attachment",
-            ))
-            db.session.commit()
+            try:
+                db.session.add(ProcessedEmail(
+                    family_id=family_id, message_id=message_id, sender=sender[:255],
+                    subject=subject[:500], result="; ".join(results)[:500] or "no pdf attachment",
+                ))
+                db.session.commit()
+            except Exception:
+                # Unique-constraint race (e.g. a concurrent/previous check already
+                # recorded this message). The work above is idempotent thanks to
+                # the PDF duplicate guard, so just move on.
+                db.session.rollback()
             known.add(message_id)
 
             # collect outcomes for the flash message
@@ -169,9 +219,10 @@ def check_gmail(app, family_id, user_id):
     return summary
 
 
-def _route_pdf(app, family_id, user_id, stored_path, original_filename, cfg):
-    """Duplicate check first, then CAS (cheap text-layer probe), else the
-    bank OCR pipeline."""
+def _route_pdf(app, family_id, user_id, stored_path, original_filename, cfg,
+               email_date=None, sender_pw=None):
+    """Duplicate check first, then CAS (cheap text-layer probe with each
+    candidate password), else the bank OCR pipeline."""
     from statement_import.cas_import import apply_cas, is_cas_pdf
     from import_service import ingest_bank_pdf, file_sha256, find_existing_import
 
@@ -181,13 +232,30 @@ def _route_pdf(app, family_id, user_id, stored_path, original_filename, cfg):
         return (f"duplicate: identical PDF already imported on "
                 f"{existing.uploaded_at:%d %b %Y} ({original_filename}) — skipped")
 
-    if cfg["cas_password"] and is_cas_pdf(stored_path, cfg["cas_password"]):
-        created, updated, skipped = apply_cas(
-            family_id, user_id, stored_path, cfg["cas_password"], original_filename,
-            file_hash=file_hash,
-        )
-        return f"cas: {created} new + {updated} updated folios ({original_filename})"
+    # CAS probe: sender-specific password (Import Settings) first, then the
+    # global CAS_PASSWORD from .env. Also try no password — some CAS mails
+    # aren't protected.
+    candidates = [pw for pw in (sender_pw, cfg["cas_password"], "") if pw is not None]
+    seen_pw = set()
+    for pw in candidates:
+        if pw in seen_pw:
+            continue
+        seen_pw.add(pw)
+        if is_cas_pdf(stored_path, pw):
+            created, updated, skipped = apply_cas(
+                family_id, user_id, stored_path, pw, original_filename,
+                file_hash=file_hash, source="gmail", email_date=email_date,
+            )
+            return f"cas: {created} new + {updated} updated folios ({original_filename})"
 
     stmt = ingest_bank_pdf(family_id, user_id, stored_path, original_filename,
-                           ocr_dpi=app.config["OCR_DPI"], file_hash=file_hash)
+                           ocr_dpi=app.config["OCR_DPI"], file_hash=file_hash,
+                           source="gmail", email_date=email_date)
+    if not stmt.accounts_found and not stmt.transactions_found:
+        # A PDF from a watched sender that contains no recognizable financial
+        # data (newsletters, ballot notices, ads) — don't clutter the review
+        # queue with an empty import.
+        db.session.delete(stmt)
+        db.session.commit()
+        return f"skipped: no account/transaction data found in {original_filename}"
     return f"bank: {stmt.bank} import #{stmt.id} pending review ({original_filename})"

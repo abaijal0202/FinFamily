@@ -122,7 +122,7 @@ def _iter_schemes(cas_data):
 
 
 def apply_cas(family_id, owner_id, pdf_path, password, original_filename="CAS.pdf",
-              file_hash=None):
+              file_hash=None, source="upload", email_date=None):
     """Apply a CAS PDF to the family's MF assets. Returns (created, updated, skipped)."""
     cas_data = parse_cas(pdf_path, password)
     period_from = (cas_data.get("statement_period") or {}).get("from")
@@ -181,6 +181,7 @@ def apply_cas(family_id, owner_id, pdf_path, password, original_filename="CAS.pd
     db.session.add(StatementImport(
         family_id=family_id, uploaded_by_id=owner_id, bank="CAS (CAMS/KFintech)",
         original_filename=original_filename, stored_path=pdf_path, file_hash=file_hash,
+        source=source, email_date=email_date,
         status=IMPORT_STATUS_CONFIRMED, confirmed_at=datetime.utcnow(),
         accounts_found=created + updated, transactions_found=0,
         warnings="" if (created + updated) else "CAS parsed but no active folios found",

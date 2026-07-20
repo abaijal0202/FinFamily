@@ -14,6 +14,7 @@ from models import (
     db, User, Family, Asset, Goal, NetWorthSnapshot,
     ASSET_CATEGORIES, NPS_SUBASSET_CLASSES, ROLES, ROLE_OWNER, ROLE_VIEWER,
     StatementImport, ImportedAccount, ImportedTransaction, Transaction,
+    ScanSender, ProcessedEmail,
     TRANSACTION_CATEGORIES, IMPORT_STATUS_PENDING, IMPORT_STATUS_CONFIRMED, IMPORT_STATUS_DISCARDED,
 )
 from statement_import.registry import supported_banks
@@ -694,6 +695,86 @@ def register_routes(app):
             db.session.commit()
             flash("Import discarded.", "success")
         return redirect(url_for("import_home"))
+
+    @app.route("/import/<int:import_id>/delete", methods=["POST"])
+    @login_required
+    def import_delete(import_id):
+        """Permanently remove a DISCARDED import from history (record + its
+        parsed accounts/transactions + the stored PDF). Confirmed imports
+        can't be deleted — they're the audit trail for ledger entries."""
+        stmt_import = StatementImport.query.filter_by(id=import_id, family_id=current_user.family_id).first_or_404()
+        if not current_user.can_edit:
+            abort(403)
+        if stmt_import.status != IMPORT_STATUS_DISCARDED:
+            flash("Only discarded imports can be deleted. Discard it first.", "error")
+            return redirect(url_for("import_home"))
+        stored = stmt_import.stored_path
+        db.session.delete(stmt_import)  # cascades to ImportedAccount/ImportedTransaction
+        db.session.commit()
+        if stored and os.path.exists(stored):
+            try:
+                os.remove(stored)
+            except OSError:
+                pass  # record is gone; a leftover file is harmless
+        flash("Import removed from history.", "success")
+        return redirect(url_for("import_home"))
+
+    # --------------------------------------------------------- IMPORT SETTINGS
+    @app.route("/import/settings")
+    @login_required
+    def import_settings():
+        senders = ScanSender.query.filter_by(family_id=current_user.family_id) \
+            .order_by(ScanSender.created_at).all()
+        recent_scans = ProcessedEmail.query.filter_by(family_id=current_user.family_id) \
+            .order_by(ProcessedEmail.processed_at.desc()).limit(50).all()
+        return render_template("import_settings.html", senders=senders,
+                                recent_scans=recent_scans,
+                                default_senders=gmail_ingest.DEFAULT_SENDERS,
+                                gmail_on=gmail_ingest.gmail_configured())
+
+    @app.route("/import/settings/senders/add", methods=["POST"])
+    @login_required
+    def scan_sender_add():
+        if current_user.role != ROLE_OWNER:
+            abort(403)
+        email_frag = (request.form.get("email") or "").strip().lower()
+        if not email_frag:
+            flash("Enter an email address or domain (e.g. donotreply@camsonline.com or camsonline.com).", "error")
+            return redirect(url_for("import_settings"))
+        db.session.add(ScanSender(
+            family_id=current_user.family_id, email=email_frag,
+            attachment_password=(request.form.get("attachment_password") or "").strip() or None,
+            notes=(request.form.get("notes") or "").strip() or None,
+        ))
+        db.session.commit()
+        flash(f"'{email_frag}' will be scanned on the next Gmail check.", "success")
+        return redirect(url_for("import_settings"))
+
+    @app.route("/import/settings/senders/<int:sender_id>/delete", methods=["POST"])
+    @login_required
+    def scan_sender_delete(sender_id):
+        if current_user.role != ROLE_OWNER:
+            abort(403)
+        sender = ScanSender.query.filter_by(id=sender_id, family_id=current_user.family_id).first_or_404()
+        db.session.delete(sender)
+        db.session.commit()
+        flash("Sender removed.", "success")
+        return redirect(url_for("import_settings"))
+
+    @app.route("/import/settings/scan-history/clear", methods=["POST"])
+    @login_required
+    def scan_history_clear():
+        """Forget which emails were already examined, so the next Gmail check
+        re-scans everything in the search window — the way to retry an email
+        that previously failed (e.g. CAS with a wrong password)."""
+        if current_user.role != ROLE_OWNER:
+            abort(403)
+        deleted = ProcessedEmail.query.filter_by(family_id=current_user.family_id).delete()
+        db.session.commit()
+        flash(f"Scan history cleared ({deleted} record(s)). The next Gmail check will re-examine "
+              f"all statement emails in the search window; already-imported PDFs are still "
+              f"skipped by the duplicate guard.", "success")
+        return redirect(url_for("import_settings"))
 
     # ------------------------------------------------------------- TRANSACTIONS
     @app.route("/transactions")

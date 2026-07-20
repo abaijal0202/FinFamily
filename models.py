@@ -225,6 +225,8 @@ class StatementImport(db.Model):
     original_filename = db.Column(db.String(255))
     stored_path = db.Column(db.String(500))
     file_hash = db.Column(db.String(64), index=True)  # SHA-256 of the PDF; duplicate guard
+    source = db.Column(db.String(10), default="upload")  # 'upload' or 'gmail'
+    email_date = db.Column(db.DateTime)  # Date header of the source email (gmail only)
     status = db.Column(db.String(20), default=IMPORT_STATUS_PENDING)
     accounts_found = db.Column(db.Integer, default=0)
     transactions_found = db.Column(db.Integer, default=0)
@@ -303,6 +305,20 @@ class AssetCashflow(db.Model):
                                           name="uq_asset_flow"),)
 
     asset = db.relationship("Asset", backref="cashflows")
+
+
+class ScanSender(db.Model):
+    """A sender address/domain the Gmail scan should watch, with an optional
+    password for its PDF attachments (e.g. the CAS password for CAMS mails,
+    or a bank's e-statement PDF password). Managed on the Import Settings page."""
+    __tablename__ = "scan_senders"
+    id = db.Column(db.Integer, primary_key=True)
+    family_id = db.Column(db.Integer, db.ForeignKey("families.id"), nullable=False)
+    email = db.Column(db.String(255), nullable=False)  # full address or domain fragment
+    attachment_password = db.Column(db.String(120))     # optional, tried for CAS/PDF opening
+    notes = db.Column(db.String(255))
+    active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class ProcessedEmail(db.Model):
