@@ -35,6 +35,81 @@ def find_existing_import(family_id, file_hash):
     ).first()
 
 
+def diff_bank_accounts(existing_import, parsed):
+    """Compare a previously-ingested StatementImport's ImportedAccount rows
+    against a freshly re-parsed ParsedStatement of the same (or a corrected)
+    PDF. Used to show a user what re-uploading a duplicate file would
+    change before they decide whether to override the duplicate guard --
+    e.g. after a parser fix picks up a fixed deposit or transactions that
+    were silently missed the first time.
+
+    Matches accounts/FDs by (kind, last-4-of-account-number); anything
+    without a readable account number is bucketed under last4 "?" and will
+    show as changed/added/removed together rather than matched precisely.
+
+    Returns a list of dicts sorted by (kind, last4):
+      {"kind": "BANK"|"FD", "last4": str, "status": "added"|"removed"|"changed"|"unchanged",
+       "old": {...} | None, "new": {...} | None}
+    Each present dict has: account_number, opening_balance, closing_balance,
+    interest_rate, maturity_date, transaction_count.
+    """
+    def _round(x):
+        return round(x, 2) if isinstance(x, (int, float)) else x
+
+    old_by_key = {}
+    for acc in existing_import.accounts:
+        key = (acc.account_kind or "BANK", acc.account_number_last4 or "?")
+        old_by_key[key] = {
+            "account_number": acc.account_number,
+            "opening_balance": _round(acc.opening_balance),
+            "closing_balance": _round(acc.closing_balance),
+            "interest_rate": _round(acc.interest_rate),
+            "maturity_date": acc.maturity_date,
+            # FDs never have ImportedTransaction rows -- keep this None for
+            # them too so it doesn't manufacture a "changed" diff against
+            # the parser's own None for FDs (see new_by_key below).
+            "transaction_count": len(acc.transactions) if acc.account_kind == "BANK" else None,
+        }
+
+    new_by_key = {}
+    for acc in parsed.accounts:
+        last4 = acc.account_number[-4:] if acc.account_number else "?"
+        new_by_key[("BANK", last4)] = {
+            "account_number": acc.account_number,
+            "opening_balance": _round(acc.opening_balance),
+            "closing_balance": _round(acc.closing_balance),
+            "interest_rate": None,
+            "maturity_date": None,
+            "transaction_count": len(acc.transactions),
+        }
+    for fd in parsed.fixed_deposits:
+        last4 = fd.fd_number[-4:] if fd.fd_number else "?"
+        new_by_key[("FD", last4)] = {
+            "account_number": fd.fd_number,
+            "opening_balance": _round(fd.principal),
+            "closing_balance": _round(fd.current_amount),
+            "interest_rate": _round(fd.rate),
+            "maturity_date": fd.maturity_date,
+            "transaction_count": None,
+        }
+
+    rows = []
+    for key in sorted(set(old_by_key) | set(new_by_key)):
+        kind, last4 = key
+        old = old_by_key.get(key)
+        new = new_by_key.get(key)
+        if old is None:
+            status = "added"
+        elif new is None:
+            status = "removed"
+        elif old == new:
+            status = "unchanged"
+        else:
+            status = "changed"
+        rows.append({"kind": kind, "last4": last4, "status": status, "old": old, "new": new})
+    return rows
+
+
 def backfill_hashes_and_discard_duplicates():
     """One-off maintenance, run at startup: hash any imports that predate the
     duplicate guard, then auto-discard pending re-imports of the same PDF
@@ -71,13 +146,17 @@ def backfill_hashes_and_discard_duplicates():
 
 def ingest_bank_pdf(family_id, user_id, stored_path, original_filename, ocr_dpi=300,
                     file_hash=None, source="upload", email_date=None, password=None,
-                    asset_owner_id=None):
+                    asset_owner_id=None, supersedes_import_id=None):
     """Parse a bank statement PDF and stage it for review.
 
     `asset_owner_id` (defaults to the uploader, `user_id`) records which
     family member the parsed accounts belong to — used later at confirm
     time so an Owner/Contributor can import a family member's statement
     without logging in as them.
+
+    `supersedes_import_id`, when set, records that this import was created
+    by explicitly overriding an earlier duplicate-file warning (see
+    `diff_bank_accounts` and `route_pdf`'s `allow_duplicate` flag).
 
     Returns the pending StatementImport. Raises ValueError if the PDF can't
     be read or no parser recognizes it.
@@ -91,6 +170,7 @@ def ingest_bank_pdf(family_id, user_id, stored_path, original_filename, ocr_dpi=
         file_hash=file_hash or file_sha256(stored_path),
         source=source, email_date=email_date,
         status=IMPORT_STATUS_PENDING, warnings="\n".join(parsed.warnings),
+        supersedes_import_id=supersedes_import_id,
     )
     db.session.add(stmt_import)
     db.session.flush()
@@ -150,10 +230,15 @@ def ingest_bank_pdf(family_id, user_id, stored_path, original_filename, ocr_dpi=
 
 def route_pdf(app, family_id, user_id, stored_path, original_filename, *,
               source="upload", email_date=None, passwords=None, ocr_dpi=None,
-              asset_owner_id=None):
+              asset_owner_id=None, allow_duplicate=False, supersedes_import_id=None):
     """Shared PDF ingestion used by both the web upload and the Gmail scan.
 
-    1. Reject if the identical PDF was already imported (duplicate guard).
+    1. Reject if the identical PDF was already imported (duplicate guard) --
+       unless `allow_duplicate` is set, which lets a user explicitly
+       re-import a PDF they've already uploaded (e.g. after a parser fix,
+       or to re-check a statement that looked incomplete the first time).
+       Callers that want to show the user what changed before re-importing
+       should call `diff_bank_accounts()` first.
     2. Try to open it as a CAMS/KFintech CAS, trying each candidate password
        (and no password) — if it opens, apply it to MF holdings.
     3. Otherwise treat it as a bank statement: OCR it (using the first
@@ -171,15 +256,16 @@ def route_pdf(app, family_id, user_id, stored_path, original_filename, *,
     from statement_import.cas_import import apply_cas, is_cas_pdf
     from statement_import.nsdl_cas import apply_nsdl_cas, is_nsdl_cas_pdf
     from statement_import.nps_kfintech import apply_nps, is_nps_pdf
+    from statement_import.epf_epfo import apply_epf, is_epf_pdf
 
     ocr_dpi = ocr_dpi if ocr_dpi is not None else app.config["OCR_DPI"]
     passwords = [p for p in (passwords or []) if p]
     owner_id = asset_owner_id or user_id
 
     file_hash = file_sha256(stored_path)
-    existing = find_existing_import(family_id, file_hash)
+    existing = None if allow_duplicate else find_existing_import(family_id, file_hash)
     if existing:
-        return {"kind": "duplicate", "stmt": None, "counts": None,
+        return {"kind": "duplicate", "stmt": None, "counts": None, "existing_import": existing,
                 "message": (f"identical PDF already imported on "
                             f"{existing.uploaded_at:%d %b %Y} — skipped")}
 
@@ -213,13 +299,20 @@ def route_pdf(app, family_id, user_id, stored_path, original_filename, *,
             )
             return {"kind": "nps", "stmt": None, "counts": (created, updated, skipped),
                     "message": f"NPS statement applied: {created} new + {updated} updated holding(s)"}
+        if is_epf_pdf(stored_path, pw):
+            created, updated, skipped = apply_epf(
+                family_id, owner_id, stored_path, pw, original_filename,
+                file_hash=file_hash, source=source, email_date=email_date,
+            )
+            return {"kind": "epf", "stmt": None, "counts": (created, updated, skipped),
+                    "message": f"EPF passbook applied: {created} new + {updated} updated account(s)"}
 
     # Bank statement OCR (first supplied password unlocks the PDF if needed).
     stmt = ingest_bank_pdf(family_id, user_id, stored_path, original_filename,
                            ocr_dpi=ocr_dpi, file_hash=file_hash,
                            source=source, email_date=email_date,
                            password=passwords[0] if passwords else None,
-                           asset_owner_id=owner_id)
+                           asset_owner_id=owner_id, supersedes_import_id=supersedes_import_id)
     if not stmt.accounts_found and not stmt.transactions_found:
         db.session.delete(stmt)
         db.session.commit()

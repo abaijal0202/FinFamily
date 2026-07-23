@@ -20,7 +20,10 @@ from models import (
 from statement_import.registry import supported_banks
 import valuation
 import gmail_ingest
-from import_service import ingest_bank_pdf, file_sha256, find_existing_import, route_pdf
+import import_service
+from import_service import (
+    ingest_bank_pdf, file_sha256, find_existing_import, route_pdf, diff_bank_accounts,
+)
 from analytics import (
     compute_alerts, compute_asset_xirr, monthly_cashflow, category_comparison,
 )
@@ -474,6 +477,38 @@ def register_routes(app):
                                 gmail_on=gmail_ingest.gmail_configured(),
                                 valuation_status=valuation.last_run, members=members)
 
+    def _handle_route_pdf_result(result):
+        """Shared flash+redirect logic for whatever route_pdf() staged or
+        applied — used by both a fresh upload and a duplicate-file override."""
+        if result["kind"] == "duplicate":
+            flash(f"This exact statement was already imported — {result['message']}. "
+                  f"Nothing was imported again.", "error")
+            return redirect(url_for("import_home"))
+        if result["kind"] == "cas":
+            created, updated, _ = result["counts"]
+            flash(f"Consolidated Account Statement recognized. {created} new and {updated} updated "
+                  f"mutual fund holding(s) applied. Net worth updated.", "success")
+            return redirect(url_for("assets_list"))
+        if result["kind"] == "nps":
+            created, updated, _ = result["counts"]
+            flash(f"NPS statement recognized. {created} new and {updated} updated NPS holding(s) "
+                  f"applied. Net worth updated.", "success")
+            return redirect(url_for("assets_list"))
+        if result["kind"] == "epf":
+            created, updated, _ = result["counts"]
+            flash(f"EPF passbook recognized. {created} new and {updated} updated EPF account(s) "
+                  f"applied. Net worth updated.", "success")
+            return redirect(url_for("assets_list"))
+        if result["kind"] == "skipped":
+            flash(f"That PDF didn't contain any recognizable statement data — {result['message']}.",
+                  "error")
+            return redirect(url_for("import_home"))
+
+        stmt_import = result["stmt"]
+        flash(f"Parsed {stmt_import.accounts_found} account(s) and {stmt_import.transactions_found} "
+              f"transaction(s). Review before confirming.", "success")
+        return redirect(url_for("import_review", import_id=stmt_import.id))
+
     @app.route("/import/upload", methods=["POST"])
     @login_required
     def import_upload():
@@ -506,6 +541,26 @@ def register_routes(app):
         if owner_id and not User.query.filter_by(id=owner_id, family_id=current_user.family_id).first():
             owner_id = None
 
+        # Duplicate-file guard: instead of just blocking, show what a fresh
+        # re-parse of this exact PDF looks like vs. what was recorded last
+        # time — a parser fix or a previously-missed page can mean a
+        # re-upload actually finds more (or different) data.
+        file_hash = file_sha256(stored_path)
+        existing = find_existing_import(current_user.family_id, file_hash)
+        if existing:
+            diff = None
+            preview_error = None
+            try:
+                _bank, parsed = import_service.parse_pdf(stored_path, dpi=app.config["OCR_DPI"], password=password)
+                if existing.accounts:  # only bank-statement imports have rows to diff against
+                    diff = diff_bank_accounts(existing, parsed)
+            except Exception as exc:
+                preview_error = str(exc)
+            return render_template(
+                "import_duplicate.html", existing=existing, diff=diff, preview_error=preview_error,
+                stored_path=stored_path, filename=filename, owner_id=owner_id, password=password or "",
+            )
+
         try:
             result = route_pdf(
                 app, current_user.family_id, current_user.id, stored_path, filename,
@@ -519,29 +574,50 @@ def register_routes(app):
             flash(f"Could not read that statement: {exc}.{hint}", "error")
             return redirect(url_for("import_home"))
 
-        if result["kind"] == "duplicate":
-            flash(f"This exact statement was already imported — {result['message']}. "
-                  f"Nothing was imported again.", "error")
-            return redirect(url_for("import_home"))
-        if result["kind"] == "cas":
-            created, updated, _ = result["counts"]
-            flash(f"Consolidated Account Statement recognized. {created} new and {updated} updated "
-                  f"mutual fund holding(s) applied. Net worth updated.", "success")
-            return redirect(url_for("assets_list"))
-        if result["kind"] == "nps":
-            created, updated, _ = result["counts"]
-            flash(f"NPS statement recognized. {created} new and {updated} updated NPS holding(s) "
-                  f"applied. Net worth updated.", "success")
-            return redirect(url_for("assets_list"))
-        if result["kind"] == "skipped":
-            flash(f"That PDF didn't contain any recognizable statement data — {result['message']}.",
-                  "error")
+        return _handle_route_pdf_result(result)
+
+    @app.route("/import/upload/override", methods=["POST"])
+    @login_required
+    def import_upload_override():
+        """Confirms a duplicate-file re-import the user explicitly approved
+        from the import_duplicate.html preview — re-uses the PDF already
+        saved to disk by the initial /import/upload attempt rather than
+        asking the browser to upload it a second time."""
+        if not current_user.can_edit:
+            flash("Viewers cannot import statements.", "error")
             return redirect(url_for("import_home"))
 
-        stmt_import = result["stmt"]
-        flash(f"Parsed {stmt_import.accounts_found} account(s) and {stmt_import.transactions_found} "
-              f"transaction(s). Review before confirming.", "success")
-        return redirect(url_for("import_review", import_id=stmt_import.id))
+        stored_path = request.form.get("stored_path") or ""
+        filename = request.form.get("filename") or "statement.pdf"
+        password = (request.form.get("password") or "").strip() or None
+        supersedes_import_id = request.form.get("supersedes_import_id", type=int)
+
+        owner_id = request.form.get("owner_id", type=int)
+        if owner_id and not User.query.filter_by(id=owner_id, family_id=current_user.family_id).first():
+            owner_id = None
+
+        # The hidden stored_path field is server-generated, but validate it
+        # actually resolves inside this family's own upload directory before
+        # trusting it — guards against a tampered form pointing elsewhere.
+        family_dir = os.path.realpath(os.path.join(app.config["UPLOAD_FOLDER"], str(current_user.family_id)))
+        real_path = os.path.realpath(stored_path) if stored_path else ""
+        if not real_path.startswith(family_dir + os.sep) or not os.path.exists(real_path):
+            flash("That upload could not be found — please choose the file again.", "error")
+            return redirect(url_for("import_home"))
+
+        try:
+            result = route_pdf(
+                app, current_user.family_id, current_user.id, real_path, filename,
+                source="upload", passwords=[password] if password else None,
+                asset_owner_id=owner_id, allow_duplicate=True,
+                supersedes_import_id=supersedes_import_id,
+            )
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"Could not read that statement: {exc}.", "error")
+            return redirect(url_for("import_home"))
+
+        return _handle_route_pdf_result(result)
 
     @app.route("/import/check-gmail", methods=["POST"])
     @login_required

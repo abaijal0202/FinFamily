@@ -37,7 +37,7 @@
       <div class="hint">
         {% if known_banks %}Statements from {{ known_banks|join(', ') }} use a dedicated, validated parser.{% endif %}
         Any other bank is read with a generic best-effort parser &mdash; review it carefully on the next screen, where every field can be corrected and missing accounts/transactions added by hand.
-        A CAMS/KFintech or NSDL e-CAS is detected automatically and applied to your mutual fund and equity holdings.
+        A CAMS/KFintech or NSDL e-CAS, an NPS KFintech statement, or an EPFO EPF passbook is detected automatically and applied to your mutual fund, NPS, or EPF holdings.
         OCR takes ~20&ndash;40s for a multi-page statement &mdash; the button below will show progress, so there's no need to click more than once.
       </div>
     </div>

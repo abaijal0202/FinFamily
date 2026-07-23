@@ -197,3 +197,112 @@ def test_parse_pdf_does_not_re_ocr_for_banks_without_preferred_settings(monkeypa
     bank, _ = statement_import.parse_pdf("dummy.pdf")
     assert bank == "HDFC"
     assert len(calls) == 1  # no second OCR pass
+
+
+# --- Robustness against real-world OCR variance -----------------------
+#
+# A real production run OCR'd the same statement differently than the text
+# above: the masked account number and the "Your Opening Balance on ..."
+# line both failed to match, which used to take the whole transaction
+# ledger down with it (parsing was gated on the opening-balance line
+# matching first) and silently dropped a fixed deposit row with no warning
+# at all. These tests simulate those failure modes directly on the known-
+# good fixtures above and check the parser degrades gracefully instead of
+# losing data silently.
+
+def _without_line(text, needle):
+    return "\n".join(l for l in text.splitlines() if needle not in l)
+
+
+def _replace_line(text, needle, replacement):
+    return "\n".join(replacement if needle in l else l for l in text.splitlines())
+
+
+def test_missing_opening_balance_does_not_drop_the_rest_of_the_ledger():
+    """Regression test for the real production bug: opening balance line
+    failed to OCR -> used to mean opening_seen never became True -> every
+    transaction was silently skipped. Now transactions are recognised by
+    their own date prefix regardless."""
+    mangled = _without_line(SAVINGS_PAGE, "Your Opening Balance on")
+    parsed = sbi.parse([mangled])
+    acc = parsed.accounts[0]
+
+    assert acc.opening_balance is None
+    assert len(acc.transactions) == 8  # all 8 still recognised, not silently dropped
+    assert acc.closing_balance == 6_996.00
+
+    # first transaction's sign can't be inferred without an opening balance
+    # -- it's flagged, not guessed at
+    assert acc.transactions[0].withdrawal == 0.0 and acc.transactions[0].deposit == 0.0
+    assert any("could not find an opening balance line" in w for w in parsed.warnings)
+    assert any("couldn't be classified as a withdrawal or deposit" in w for w in parsed.warnings)
+
+    # every transaction *after* the first still chains correctly off its
+    # predecessor's balance, so they're unaffected
+    assert acc.transactions[1].withdrawal == 100_000.00 and acc.transactions[1].balance_after == 5_957.00
+    assert acc.transactions[-1].deposit == 1_039.00
+
+
+def test_masked_account_number_found_a_few_lines_later():
+    """OCR sometimes shifts the masked-account 'chip' by a line or two --
+    the scan window should still find it without a warning."""
+    shifted = SAVINGS_PAGE.replace(
+        "SAVING ACCOUNT\nXXXXXXKX2973\n",
+        "SAVING ACCOUNT\n\n \nXXXXXXKX2973\n",
+    )
+    parsed = sbi.parse([shifted])
+    acc = parsed.accounts[0]
+    assert acc.account_number == "2973"
+    assert not any("masked savings account number" in w for w in parsed.warnings)
+
+
+def test_masked_account_number_missing_emits_warning_instead_of_silent_unknown():
+    mangled = _without_line(SAVINGS_PAGE, "XXXXXXKX2973")
+    parsed = sbi.parse([mangled])
+    acc = parsed.accounts[0]
+    assert acc.account_number == "UNKNOWN"
+    assert any("Could not find the masked savings account number" in w for w in parsed.warnings)
+
+
+def test_fd_line_that_fails_to_fully_parse_warns_instead_of_vanishing():
+    """Regression test for the real production bug: FD XXXXXXX5653 silently
+    disappeared with zero trace. A TERM DEPOSIT line that doesn't fully
+    match now raises a warning that names the raw line, and the other FDs
+    are unaffected."""
+    garbled = _replace_line(
+        FD_PAGE, "XXXXXXX5653",
+        "TERM DEPOSIT XXXXXXX5653 05-03-25 500000.00 P SINGLE",  # truncated mid-row
+    )
+    parsed = sbi.parse([garbled])
+    assert len(parsed.fixed_deposits) == 4  # the other 4 are unaffected
+    assert {fd.fd_number for fd in parsed.fixed_deposits} == {
+        "XXXXXXX0127", "XXXXXXX0424", "XXXXXXX6650", "XXXXXXX2893",
+    }
+    assert any("could not be fully read" in w and "5653" in w for w in parsed.warnings)
+
+
+def test_unicode_dash_variants_in_balance_lines_are_normalized():
+    """Tesseract font substitution sometimes renders a hyphen as an en-dash
+    or similar -- normalization should fold it back before matching."""
+    weird = (
+        SAVINGS_PAGE
+        .replace("Your Opening Balance on 01-06-26", "Your Opening Balance on 01–06–26")
+        .replace("Your Closing Balance on 30-06-26", "Your Closing Balance on 30–06–26")
+    )
+    parsed = sbi.parse([weird])
+    acc = parsed.accounts[0]
+    assert acc.opening_balance == 155_957.00
+    assert acc.closing_balance == 6_996.00
+    assert len(acc.transactions) == 8
+    assert parsed.warnings == []
+
+
+def test_opening_balance_wrapped_across_two_ocr_lines_still_matches():
+    wrapped = SAVINGS_PAGE.replace(
+        "Your Opening Balance on 01-06-26: = 155957.00\n",
+        "Your Opening Balance on 01-06-26:\n= 155957.00\n",
+    )
+    parsed = sbi.parse([wrapped])
+    acc = parsed.accounts[0]
+    assert acc.opening_balance == 155_957.00
+    assert len(acc.transactions) == 8

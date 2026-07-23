@@ -238,11 +238,16 @@ class StatementImport(db.Model):
     warnings = db.Column(db.Text)  # newline-separated parser warnings, shown on review page
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
     confirmed_at = db.Column(db.DateTime)
+    # Set when this import was created by explicitly overriding a duplicate-
+    # file warning (re-uploading a PDF that was already imported before) --
+    # lets import history show what a re-upload changed vs. the earlier one.
+    supersedes_import_id = db.Column(db.Integer, db.ForeignKey("statement_imports.id"))
 
     uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id])
     asset_owner = db.relationship("User", foreign_keys=[asset_owner_id])
     accounts = db.relationship("ImportedAccount", backref="statement_import",
                                 lazy=True, cascade="all, delete-orphan")
+    supersedes = db.relationship("StatementImport", remote_side=[id])
 
     @property
     def warning_list(self):

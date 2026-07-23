@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Already Imported — FinFamily{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>This Statement Was Already Imported</h1>
+    <div class="subtitle">{{ filename }} is identical to a file you uploaded on {{ existing.uploaded_at.strftime('%d %b %Y, %H:%M') }}</div>
+  </div>
+</div>
+
+<div class="panel" style="max-width: 720px; margin-bottom: 20px;">
+  <p style="margin:0 0 6px;">
+    <strong>{{ existing.bank or 'That statement' }}</strong> &middot; {{ existing.original_filename }} &middot;
+    status: <span class="pill {{ 'pill-liability' if existing.status=='discarded' else '' }}">{{ existing.status.replace('_',' ') }}</span>
+    {% if existing.asset_owner %} &middot; for {{ existing.asset_owner.name }}{% endif %}
+  </p>
+  <p class="text-muted" style="font-size:12.5px; margin:0;">
+    Recorded {{ existing.accounts_found }} account(s) and {{ existing.transactions_found }} transaction(s) at the time.
+  </p>
+</div>
+
+{% if preview_error %}
+<div class="panel" style="border-left:4px solid var(--red); max-width:720px; margin-bottom:20px;">
+  <h3 style="color:var(--red); margin:0 0 8px;">Couldn't re-check this file</h3>
+  <p style="margin:0; font-size:13px;">{{ preview_error }}</p>
+</div>
+{% elif diff %}
+<div class="panel" style="max-width: 900px; margin-bottom: 20px;">
+  <h3 style="font-family:'Fraunces',serif; color:var(--navy); font-size:16px; margin:0 0 10px;">
+    What re-parsing this file finds now vs. last time
+  </h3>
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr>
+          <th>Account</th><th>Change</th>
+          <th class="text-right">Opening / Principal</th>
+          <th class="text-right">Closing / Current</th>
+          <th class="text-right">Transactions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in diff %}
+        <tr>
+          <td>{{ row.kind }} &bull;&bull;{{ row.last4 }}</td>
+          <td>
+            {% if row.status == 'added' %}<span class="pill">new this time</span>
+            {% elif row.status == 'removed' %}<span class="pill pill-liability">missing this time</span>
+            {% elif row.status == 'changed' %}<span class="pill pill-liability">changed</span>
+            {% else %}<span class="text-muted">unchanged</span>{% endif %}
+          </td>
+          <td class="text-right">
+            {% if row.status == 'changed' and row.old.opening_balance != row.new.opening_balance %}
+              <span class="text-muted" style="text-decoration:line-through;">{{ row.old.opening_balance|inr(2) if row.old.opening_balance is not none else '—' }}</span>
+              &rarr; {{ row.new.opening_balance|inr(2) if row.new.opening_balance is not none else '—' }}
+            {% else %}
+              {{ (row.new.opening_balance if row.new else row.old.opening_balance)|inr(2) if (row.new.opening_balance if row.new else row.old.opening_balance) is not none else '—' }}
+            {% endif %}
+          </td>
+          <td class="text-right">
+            {% if row.status == 'changed' and row.old.closing_balance != row.new.closing_balance %}
+              <span class="text-muted" style="text-decoration:line-through;">{{ row.old.closing_balance|inr(2) if row.old.closing_balance is not none else '—' }}</span>
+              &rarr; {{ row.new.closing_balance|inr(2) if row.new.closing_balance is not none else '—' }}
+            {% else %}
+              {{ (row.new.closing_balance if row.new else row.old.closing_balance)|inr(2) if (row.new.closing_balance if row.new else row.old.closing_balance) is not none else '—' }}
+            {% endif %}
+          </td>
+          <td class="text-right">
+            {% if row.status == 'changed' and row.old.transaction_count != row.new.transaction_count %}
+              <span class="text-muted" style="text-decoration:line-through;">{{ row.old.transaction_count if row.old.transaction_count is not none else '—' }}</span>
+              &rarr; {{ row.new.transaction_count if row.new.transaction_count is not none else '—' }}
+            {% else %}
+              {{ (row.new.transaction_count if row.new else row.old.transaction_count) if (row.new.transaction_count if row.new else row.old.transaction_count) is not none else '—' }}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% set changed_count = diff | selectattr('status', 'in', ['added', 'removed', 'changed']) | list | length %}
+  {% if changed_count == 0 %}
+  <p class="text-muted" style="font-size:12.5px; margin:10px 0 0;">Re-parsing found no differences from last time.</p>
+  {% else %}
+  <p class="text-muted" style="font-size:12.5px; margin:10px 0 0;">{{ changed_count }} account(s) differ from what was recorded before — this can happen after a parser fix, or if OCR read the file differently this time.</p>
+  {% endif %}
+</div>
+{% else %}
+<div class="panel" style="max-width:720px; margin-bottom:20px;">
+  <p style="margin:0; font-size:13px;">A detailed comparison isn't available for this statement type, but you can still re-import it if you have reason to believe it should be re-checked.</p>
+</div>
+{% endif %}
+
+<div class="panel" style="max-width: 720px;">
+  <form method="POST" action="{{ url_for('import_upload_override') }}" class="js-busy-on-submit" style="display:inline;">
+    <input type="hidden" name="stored_path" value="{{ stored_path }}">
+    <input type="hidden" name="filename" value="{{ filename }}">
+    <input type="hidden" name="owner_id" value="{{ owner_id or '' }}">
+    <input type="hidden" name="password" value="{{ password or '' }}">
+    <input type="hidden" name="supersedes_import_id" value="{{ existing.id }}">
+    <button type="submit" class="btn btn-primary" data-busy-text="Re-importing…">Override &amp; re-import anyway</button>
+    <a href="{{ url_for('import_home') }}" class="btn btn-outline" style="margin-left:8px;">Cancel</a>
+  </form>
+  <p class="hint" style="margin-top:10px;">
+    Re-importing creates a new pending import you'll review before anything changes — it won't touch what was already confirmed unless you choose to update those accounts on the review screen.
+  </p>
+</div>
+{% endblock %}

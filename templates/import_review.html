@@ -5,7 +5,8 @@
   <div>
     <h1>Review Statement Import</h1>
     <div class="subtitle">{{ stmt_import.bank }} &middot; {{ stmt_import.original_filename }} &middot; uploaded {{ stmt_import.uploaded_at.strftime('%d %b %Y, %H:%M') }}
-      {% if stmt_import.asset_owner %} &middot; for {{ stmt_import.asset_owner.name }}{% endif %}</div>
+      {% if stmt_import.asset_owner %} &middot; for {{ stmt_import.asset_owner.name }}{% endif %}
+      {% if stmt_import.supersedes %} &middot; re-import overriding the duplicate of {{ stmt_import.supersedes.uploaded_at.strftime('%d %b %Y') }}{% endif %}</div>
   </div>
 </div>
 

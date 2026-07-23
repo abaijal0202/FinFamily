@@ -104,6 +104,32 @@ def test_route_pdf_falls_through_to_nps(app, family_and_user, tmp_path, monkeypa
     assert "NPS" in res["message"]
 
 
+def test_route_pdf_falls_through_to_epf(app, family_and_user, tmp_path, monkeypatch):
+    family, user = family_and_user
+
+    # CAMS/KFintech, NSDL CAS, and NPS probes all fail...
+    monkeypatch.setattr(cas_import, "parse_cas",
+                        lambda p, pw: (_ for _ in ()).throw(Exception("not a cams cas")))
+    from statement_import import nsdl_cas
+    monkeypatch.setattr(nsdl_cas, "is_nsdl_cas_pdf", lambda path, password=None: False)
+    from statement_import import nps_kfintech
+    monkeypatch.setattr(nps_kfintech, "is_nps_pdf", lambda path, password=None: False)
+
+    from statement_import import epf_epfo
+    monkeypatch.setattr(epf_epfo, "is_epf_pdf", lambda path, password=None: True)
+
+    def fake_apply(family_id, user_id, path, password=None, original_filename="EPF.pdf",
+                   file_hash=None, source="upload", email_date=None):
+        return (1, 0, 0)
+
+    monkeypatch.setattr(epf_epfo, "apply_epf", fake_apply)
+
+    res = import_service.route_pdf(app, family.id, user.id, _pdf(tmp_path, "epf.pdf"), "epf.pdf")
+    assert res["kind"] == "epf"
+    assert res["counts"] == (1, 0, 0)
+    assert "EPF" in res["message"]
+
+
 def test_route_pdf_asset_owner_id_used_for_cas_not_uploader(app, family_and_user, tmp_path, monkeypatch):
     """An Owner uploading a family member's CAS should create the MF asset
     under that member, not under whoever clicked upload."""
