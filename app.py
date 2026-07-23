@@ -20,7 +20,7 @@ from models import (
 from statement_import.registry import supported_banks
 import valuation
 import gmail_ingest
-from import_service import ingest_bank_pdf, file_sha256, find_existing_import
+from import_service import ingest_bank_pdf, file_sha256, find_existing_import, route_pdf
 from analytics import (
     compute_alerts, compute_asset_xirr, monthly_cashflow, category_comparison,
 )
@@ -42,6 +42,8 @@ def create_app():
 
     # Schema is managed by Flask-Migrate: run `flask db upgrade` (the
     # start_finfamily script does this) instead of db.create_all().
+
+    app.jinja_env.filters["inr"] = format_inr
 
     register_routes(app)
     return app
@@ -309,6 +311,7 @@ def register_routes(app):
             )
             db.session.add(asset)
             db.session.commit()
+            valuation.snapshot_all_families()
             flash(f"{asset.name} added.", "success")
             return redirect(url_for("assets_list"))
 
@@ -353,6 +356,7 @@ def register_routes(app):
             asset.is_private = request.form.get("is_private") == "on"
             asset.updated_at = datetime.utcnow()
             db.session.commit()
+            valuation.snapshot_all_families()
             flash(f"{asset.name} updated.", "success")
             return redirect(url_for("assets_list"))
 
@@ -367,6 +371,7 @@ def register_routes(app):
             abort(403)
         db.session.delete(asset)
         db.session.commit()
+        valuation.snapshot_all_families()
         flash("Asset removed.", "success")
         return redirect(url_for("assets_list"))
 
@@ -464,9 +469,10 @@ def register_routes(app):
     def import_home():
         imports = StatementImport.query.filter_by(family_id=current_user.family_id) \
             .order_by(StatementImport.uploaded_at.desc()).all()
+        members = User.query.filter_by(family_id=current_user.family_id).all()
         return render_template("import_upload.html", imports=imports, known_banks=supported_banks(),
                                 gmail_on=gmail_ingest.gmail_configured(),
-                                valuation_status=valuation.last_run)
+                                valuation_status=valuation.last_run, members=members)
 
     @app.route("/import/upload", methods=["POST"])
     @login_required
@@ -491,30 +497,50 @@ def register_routes(app):
         stored_path = os.path.join(family_dir, stored_name)
         file.save(stored_path)
 
-        # Duplicate guard: exact same PDF already imported (and not discarded)?
-        file_hash = file_sha256(stored_path)
-        existing = find_existing_import(current_user.family_id, file_hash)
-        if existing:
-            flash(
-                f"This exact statement was already imported on "
-                f"{existing.uploaded_at:%d %b %Y, %H:%M} "
-                f"(status: {existing.status.replace('_', ' ')}) — nothing was imported again. "
-                f"Discard the earlier import first if you really want to redo it.",
-                "error",
-            )
-            return redirect(url_for("import_home"))
+        password = (request.form.get("pdf_password") or "").strip() or None
+
+        # Who these holdings belong to — lets an Owner/Contributor import a
+        # family member's statement without logging in as them. Must be a
+        # real member of this family; otherwise fall back to the uploader.
+        owner_id = request.form.get("owner_id", type=int)
+        if owner_id and not User.query.filter_by(id=owner_id, family_id=current_user.family_id).first():
+            owner_id = None
 
         try:
-            stmt_import = ingest_bank_pdf(
-                current_user.family_id, current_user.id, stored_path, filename,
-                ocr_dpi=app.config["OCR_DPI"], file_hash=file_hash,
+            result = route_pdf(
+                app, current_user.family_id, current_user.id, stored_path, filename,
+                source="upload", passwords=[password] if password else None,
+                asset_owner_id=owner_id,
             )
         except Exception as exc:
             db.session.rollback()
-            flash(f"Could not read that statement: {exc}", "error")
+            hint = " If the PDF is password-protected, enter its password above and try again." \
+                if "password" not in str(exc).lower() else ""
+            flash(f"Could not read that statement: {exc}.{hint}", "error")
             return redirect(url_for("import_home"))
 
-        flash(f"Parsed {stmt_import.accounts_found} account(s) and {stmt_import.transactions_found} transaction(s). Review before confirming.", "success")
+        if result["kind"] == "duplicate":
+            flash(f"This exact statement was already imported — {result['message']}. "
+                  f"Nothing was imported again.", "error")
+            return redirect(url_for("import_home"))
+        if result["kind"] == "cas":
+            created, updated, _ = result["counts"]
+            flash(f"Consolidated Account Statement recognized. {created} new and {updated} updated "
+                  f"mutual fund holding(s) applied. Net worth updated.", "success")
+            return redirect(url_for("assets_list"))
+        if result["kind"] == "nps":
+            created, updated, _ = result["counts"]
+            flash(f"NPS statement recognized. {created} new and {updated} updated NPS holding(s) "
+                  f"applied. Net worth updated.", "success")
+            return redirect(url_for("assets_list"))
+        if result["kind"] == "skipped":
+            flash(f"That PDF didn't contain any recognizable statement data — {result['message']}.",
+                  "error")
+            return redirect(url_for("import_home"))
+
+        stmt_import = result["stmt"]
+        flash(f"Parsed {stmt_import.accounts_found} account(s) and {stmt_import.transactions_found} "
+              f"transaction(s). Review before confirming.", "success")
         return redirect(url_for("import_review", import_id=stmt_import.id))
 
     @app.route("/import/check-gmail", methods=["POST"])
@@ -586,7 +612,8 @@ def register_routes(app):
 
             if choice == "new":
                 asset = Asset(
-                    family_id=current_user.family_id, owner_id=current_user.id,
+                    family_id=current_user.family_id,
+                    owner_id=stmt_import.asset_owner_id or stmt_import.uploaded_by_id,
                     category=kind if kind in ASSET_CATEGORIES else "BANK",
                     name=name, institution=stmt_import.bank,
                     current_value=closing_balance if closing_balance is not None else 0.0,
@@ -683,6 +710,7 @@ def register_routes(app):
         stmt_import.status = IMPORT_STATUS_CONFIRMED
         stmt_import.confirmed_at = datetime.utcnow()
         db.session.commit()
+        valuation.snapshot_all_families()
         flash(f"Import confirmed: {txns_added} transaction(s) added to your ledger.", "success")
         return redirect(url_for("assets_list"))
 
@@ -871,6 +899,36 @@ def _to_date(val):
         return datetime.strptime(val, "%Y-%m-%d").date()
     except ValueError:
         return None
+
+
+def format_inr(value, decimals=0):
+    """Format a number using the Indian digit-grouping convention
+    (last 3 digits, then groups of 2: 12,34,567 not 1,234,567). Used as the
+    `inr` Jinja filter everywhere a rupee amount is shown."""
+    try:
+        value = float(value or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    negative = value < 0
+    value = abs(value)
+
+    if decimals:
+        int_part, _, frac_part = f"{value:.{decimals}f}".partition(".")
+    else:
+        int_part, frac_part = str(int(round(value))), None
+
+    if len(int_part) > 3:
+        last3, rest = int_part[-3:], int_part[:-3]
+        groups = []
+        while len(rest) > 2:
+            groups.insert(0, rest[-2:])
+            rest = rest[:-2]
+        if rest:
+            groups.insert(0, rest)
+        int_part = ",".join(groups) + "," + last3
+
+    result = f"{int_part}.{frac_part}" if frac_part is not None else int_part
+    return f"-{result}" if negative else result
 
 
 app = create_app()

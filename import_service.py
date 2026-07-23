@@ -70,16 +70,23 @@ def backfill_hashes_and_discard_duplicates():
 
 
 def ingest_bank_pdf(family_id, user_id, stored_path, original_filename, ocr_dpi=300,
-                    file_hash=None, source="upload", email_date=None):
+                    file_hash=None, source="upload", email_date=None, password=None,
+                    asset_owner_id=None):
     """Parse a bank statement PDF and stage it for review.
+
+    `asset_owner_id` (defaults to the uploader, `user_id`) records which
+    family member the parsed accounts belong to — used later at confirm
+    time so an Owner/Contributor can import a family member's statement
+    without logging in as them.
 
     Returns the pending StatementImport. Raises ValueError if the PDF can't
     be read or no parser recognizes it.
     """
-    bank, parsed = parse_pdf(stored_path, dpi=ocr_dpi)
+    bank, parsed = parse_pdf(stored_path, dpi=ocr_dpi, password=password)
 
     stmt_import = StatementImport(
         family_id=family_id, uploaded_by_id=user_id,
+        asset_owner_id=asset_owner_id or user_id,
         bank=bank, original_filename=original_filename, stored_path=stored_path,
         file_hash=file_hash or file_sha256(stored_path),
         source=source, email_date=email_date,
@@ -139,3 +146,84 @@ def ingest_bank_pdf(family_id, user_id, stored_path, original_filename, ocr_dpi=
     stmt_import.transactions_found = total_txns
     db.session.commit()
     return stmt_import
+
+
+def route_pdf(app, family_id, user_id, stored_path, original_filename, *,
+              source="upload", email_date=None, passwords=None, ocr_dpi=None,
+              asset_owner_id=None):
+    """Shared PDF ingestion used by both the web upload and the Gmail scan.
+
+    1. Reject if the identical PDF was already imported (duplicate guard).
+    2. Try to open it as a CAMS/KFintech CAS, trying each candidate password
+       (and no password) — if it opens, apply it to MF holdings.
+    3. Otherwise treat it as a bank statement: OCR it (using the first
+       supplied password to unlock the PDF, if any) and stage for review.
+
+    `user_id` is who performed the upload (recorded as uploaded_by_id, for
+    the audit trail). `asset_owner_id` is who the holdings belong to —
+    defaults to `user_id` — so an Owner/Contributor can import a family
+    member's statement (CAS, NPS, bank) without logging in as them.
+
+    Returns a dict: {"kind": "duplicate"|"cas"|"nps"|"bank"|"skipped",
+                     "message": str, "stmt": StatementImport|None,
+                     "counts": (created, updated, skipped) for CAS/NPS}.
+    """
+    from statement_import.cas_import import apply_cas, is_cas_pdf
+    from statement_import.nsdl_cas import apply_nsdl_cas, is_nsdl_cas_pdf
+    from statement_import.nps_kfintech import apply_nps, is_nps_pdf
+
+    ocr_dpi = ocr_dpi if ocr_dpi is not None else app.config["OCR_DPI"]
+    passwords = [p for p in (passwords or []) if p]
+    owner_id = asset_owner_id or user_id
+
+    file_hash = file_sha256(stored_path)
+    existing = find_existing_import(family_id, file_hash)
+    if existing:
+        return {"kind": "duplicate", "stmt": None, "counts": None,
+                "message": (f"identical PDF already imported on "
+                            f"{existing.uploaded_at:%d %b %Y} — skipped")}
+
+    # CAS probe with each candidate password, then no password. Tries the
+    # CAMS/KFintech text-layer path first (cheap — no OCR), then the
+    # OCR-based NSDL e-CAS path.
+    seen = set()
+    for pw in [*passwords, ""]:
+        if pw in seen:
+            continue
+        seen.add(pw)
+        if is_cas_pdf(stored_path, pw):
+            created, updated, skipped = apply_cas(
+                family_id, owner_id, stored_path, pw, original_filename,
+                file_hash=file_hash, source=source, email_date=email_date,
+            )
+            return {"kind": "cas", "stmt": None, "counts": (created, updated, skipped),
+                    "message": f"CAS applied: {created} new + {updated} updated folio(s)"}
+        if is_nsdl_cas_pdf(stored_path, pw):
+            created, updated, skipped = apply_nsdl_cas(
+                family_id, owner_id, stored_path, pw, original_filename,
+                file_hash=file_hash, source=source, email_date=email_date,
+                dpi=ocr_dpi,
+            )
+            return {"kind": "cas", "stmt": None, "counts": (created, updated, skipped),
+                    "message": f"NSDL CAS applied: {created} new + {updated} updated holding(s)"}
+        if is_nps_pdf(stored_path, pw):
+            created, updated, skipped = apply_nps(
+                family_id, owner_id, stored_path, pw, original_filename,
+                file_hash=file_hash, source=source, email_date=email_date,
+            )
+            return {"kind": "nps", "stmt": None, "counts": (created, updated, skipped),
+                    "message": f"NPS statement applied: {created} new + {updated} updated holding(s)"}
+
+    # Bank statement OCR (first supplied password unlocks the PDF if needed).
+    stmt = ingest_bank_pdf(family_id, user_id, stored_path, original_filename,
+                           ocr_dpi=ocr_dpi, file_hash=file_hash,
+                           source=source, email_date=email_date,
+                           password=passwords[0] if passwords else None,
+                           asset_owner_id=owner_id)
+    if not stmt.accounts_found and not stmt.transactions_found:
+        db.session.delete(stmt)
+        db.session.commit()
+        return {"kind": "skipped", "stmt": None, "counts": None,
+                "message": f"no account/transaction data found in {original_filename}"}
+    return {"kind": "bank", "stmt": stmt, "counts": None,
+            "message": f"{stmt.bank} statement parsed — {stmt.accounts_found} account(s)"}

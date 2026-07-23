@@ -12,6 +12,7 @@ audit StatementImport row) instead of a review screen.
 from datetime import datetime, date
 
 from models import db, Asset, AssetCashflow, StatementImport, IMPORT_STATUS_CONFIRMED
+import valuation
 
 
 def _to_date(value):
@@ -69,9 +70,9 @@ def _record_cashflows(asset, scheme, period_from):
         start = _to_date(period_from)
         ref_nav = next((nav for _, _, _, nav in parsed_txns if nav), None)
         if ref_nav is None:
-            valuation = scheme.get("valuation") or {}
+            val_info = scheme.get("valuation") or {}
             try:
-                ref_nav = float(valuation.get("nav") or 0) or None
+                ref_nav = float(val_info.get("nav") or 0) or None
             except (TypeError, ValueError):
                 ref_nav = None
         if start and ref_nav:
@@ -141,9 +142,9 @@ def apply_cas(family_id, owner_id, pdf_path, password, original_filename="CAS.pd
             close_units = float(scheme.get("close") or 0)
         except (TypeError, ValueError):
             close_units = 0.0
-        valuation = scheme.get("valuation") or {}
+        val_info = scheme.get("valuation") or {}
         try:
-            value = float(valuation.get("value") or 0)
+            value = float(val_info.get("value") or 0)
         except (TypeError, ValueError):
             value = 0.0
 
@@ -187,4 +188,6 @@ def apply_cas(family_id, owner_id, pdf_path, password, original_filename="CAS.pd
         warnings="" if (created + updated) else "CAS parsed but no active folios found",
     ))
     db.session.commit()
+    if created + updated:
+        valuation.snapshot_all_families()  # keep the net-worth trend current
     return created, updated, skipped

@@ -18,6 +18,9 @@ Pillow>=10.0.0
 # Mutual fund CAS (CAMS/KFintech) parsing — no OCR needed
 casparser==0.7.4
 
+# NPS (KFintech CRA) statement parsing — uses the `pdftotext` CLI from the
+# same Poppler install required above by pdf2image; no extra package needed.
+
 # Optional: live equity prices for assets with a ticker (heavier install)
 # yfinance==0.2.40
 

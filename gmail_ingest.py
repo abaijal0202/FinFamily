@@ -4,7 +4,8 @@ Connects with a Google App Password (Settings > Security > 2-Step
 Verification > App passwords), searches recent mail for statement emails,
 downloads PDF attachments, and routes each one:
 
-  - CAS PDF (CAMS/KFintech, opens with CAS_PASSWORD)  -> applied to MF assets
+  - CAS PDF (CAMS/KFintech or NSDL, opens with        -> applied to MF/equity
+    CAS_PASSWORD)                                         assets
   - anything else                                     -> bank import pipeline,
                                                           staged for review
 
@@ -221,41 +222,22 @@ def _check_gmail_locked(app, family_id, user_id, cfg):
 
 def _route_pdf(app, family_id, user_id, stored_path, original_filename, cfg,
                email_date=None, sender_pw=None):
-    """Duplicate check first, then CAS (cheap text-layer probe with each
-    candidate password), else the bank OCR pipeline."""
-    from statement_import.cas_import import apply_cas, is_cas_pdf
-    from import_service import ingest_bank_pdf, file_sha256, find_existing_import
+    """Delegate to the shared router. Candidate passwords for opening a
+    protected attachment: the sender-specific one (Import Settings) first,
+    then the global CAS_PASSWORD from .env."""
+    from import_service import route_pdf
 
-    file_hash = file_sha256(stored_path)
-    existing = find_existing_import(family_id, file_hash)
-    if existing:
-        return (f"duplicate: identical PDF already imported on "
-                f"{existing.uploaded_at:%d %b %Y} ({original_filename}) — skipped")
-
-    # CAS probe: sender-specific password (Import Settings) first, then the
-    # global CAS_PASSWORD from .env. Also try no password — some CAS mails
-    # aren't protected.
-    candidates = [pw for pw in (sender_pw, cfg["cas_password"], "") if pw is not None]
-    seen_pw = set()
-    for pw in candidates:
-        if pw in seen_pw:
-            continue
-        seen_pw.add(pw)
-        if is_cas_pdf(stored_path, pw):
-            created, updated, skipped = apply_cas(
-                family_id, user_id, stored_path, pw, original_filename,
-                file_hash=file_hash, source="gmail", email_date=email_date,
-            )
-            return f"cas: {created} new + {updated} updated folios ({original_filename})"
-
-    stmt = ingest_bank_pdf(family_id, user_id, stored_path, original_filename,
-                           ocr_dpi=app.config["OCR_DPI"], file_hash=file_hash,
-                           source="gmail", email_date=email_date)
-    if not stmt.accounts_found and not stmt.transactions_found:
-        # A PDF from a watched sender that contains no recognizable financial
-        # data (newsletters, ballot notices, ads) — don't clutter the review
-        # queue with an empty import.
-        db.session.delete(stmt)
-        db.session.commit()
+    result = route_pdf(
+        app, family_id, user_id, stored_path, original_filename,
+        source="gmail", email_date=email_date,
+        passwords=[sender_pw, cfg["cas_password"]],
+    )
+    kind = result["kind"]
+    if kind == "duplicate":
+        return f"duplicate: already imported ({original_filename}) — skipped"
+    if kind == "cas":
+        created, updated, _ = result["counts"]
+        return f"cas: {created} new + {updated} updated folios ({original_filename})"
+    if kind == "skipped":
         return f"skipped: no account/transaction data found in {original_filename}"
-    return f"bank: {stmt.bank} import #{stmt.id} pending review ({original_filename})"
+    return f"bank: {result['stmt'].bank} import #{result['stmt'].id} pending review ({original_filename})"

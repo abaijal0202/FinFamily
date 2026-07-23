@@ -221,6 +221,11 @@ class StatementImport(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     family_id = db.Column(db.Integer, db.ForeignKey("families.id"), nullable=False)
     uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    # Who this statement's holdings belong to — lets an Owner/Contributor
+    # import a family member's statement without logging in as them. Falls
+    # back to uploaded_by_id (the person who actually did the upload) when
+    # not set, e.g. for older rows or Gmail auto-ingestion.
+    asset_owner_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     bank = db.Column(db.String(40))
     original_filename = db.Column(db.String(255))
     stored_path = db.Column(db.String(500))
@@ -234,7 +239,8 @@ class StatementImport(db.Model):
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
     confirmed_at = db.Column(db.DateTime)
 
-    uploaded_by = db.relationship("User")
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id])
+    asset_owner = db.relationship("User", foreign_keys=[asset_owner_id])
     accounts = db.relationship("ImportedAccount", backref="statement_import",
                                 lazy=True, cascade="all, delete-orphan")
 

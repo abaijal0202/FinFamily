@@ -38,7 +38,7 @@
         <td>{{ a.owner.name }}</td>
         <td>{{ a.institution or '—' }}</td>
         <td class="text-right mono">
-          {% if a.is_liability %}-{% endif %}₹{{ '{:,.0f}'.format(a.current_value or 0) }}
+          {% if a.is_liability %}-{% endif %}₹{{ (a.current_value or 0) | inr }}
         </td>
         <td class="text-right">
           {% if xirr_map and a.id in xirr_map %}

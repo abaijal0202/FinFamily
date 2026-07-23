@@ -29,9 +29,9 @@
         <td style="max-width:340px;">{{ t.narration }}</td>
         <td><span class="pill">{{ t.category or 'Uncategorized' }}</span></td>
         <td class="text-right mono" style="color: {{ 'var(--green)' if t.amount > 0 else 'var(--red)' if t.amount < 0 else 'inherit' }};">
-          {{ '+' if t.amount > 0 else '' }}&#8377;{{ '{:,.2f}'.format(t.amount) }}
+          {{ '+' if t.amount > 0 else '' }}&#8377;{{ t.amount | inr(2) }}
         </td>
-        <td class="text-right mono">{{ '₹{:,.2f}'.format(t.balance_after) if t.balance_after is not none else '—' }}</td>
+        <td class="text-right mono">{{ '₹' + (t.balance_after | inr(2)) if t.balance_after is not none else '—' }}</td>
       </tr>
       {% endfor %}
     </tbody>

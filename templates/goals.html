@@ -23,10 +23,10 @@
   </div>
   <div class="progress-track"><div class="progress-fill" style="width: {{ g.progress_pct }}%;"></div></div>
   <div class="goal-meta">
-    <span><strong>₹{{ '{:,.0f}'.format(g.current_corpus) }}</strong> of ₹{{ '{:,.0f}'.format(g.target_amount) }} ({{ g.progress_pct }}%)</span>
+    <span><strong>₹{{ g.current_corpus | inr }}</strong> of ₹{{ g.target_amount | inr }} ({{ g.progress_pct }}%)</span>
     {% if g.target_date %}<span>Target date: <strong>{{ g.target_date.strftime('%b %Y') }}</strong></span>{% endif %}
-    {% if g.shortfall > 0 %}<span>Shortfall: <strong style="color:#A6403A;">₹{{ '{:,.0f}'.format(g.shortfall) }}</strong></span>{% endif %}
-    {% if g.projected_shortfall_monthly_sip %}<span>Suggested top-up SIP: <strong>₹{{ '{:,.0f}'.format(g.projected_shortfall_monthly_sip) }}/mo</strong></span>{% endif %}
+    {% if g.shortfall > 0 %}<span>Shortfall: <strong style="color:#A6403A;">₹{{ g.shortfall | inr }}</strong></span>{% endif %}
+    {% if g.projected_shortfall_monthly_sip %}<span>Suggested top-up SIP: <strong>₹{{ g.projected_shortfall_monthly_sip | inr }}/mo</strong></span>{% endif %}
     <span>{{ g.linked_assets|length }} linked asset(s)</span>
   </div>
 </div>

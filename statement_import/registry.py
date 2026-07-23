@@ -11,10 +11,11 @@ Accuracy there is lower (flagged via warnings on the parsed statement),
 but nothing is blocked on a specific bank being "supported": every field
 can be corrected on the review screen regardless of which parser ran.
 """
-from .parsers import hdfc, generic
+from .parsers import hdfc, sbi, generic
 
 _BANK_PARSERS = [
     ("HDFC", hdfc),
+    ("SBI", sbi),
 ]
 _FALLBACK_NAME = "Generic"
 _FALLBACK_MODULE = generic

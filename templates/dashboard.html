@@ -39,26 +39,41 @@
 <div class="kpi-row">
   <div class="kpi-card">
     <div class="kpi-label">Total Assets</div>
-    <div class="kpi-value">₹{{ '{:,.0f}'.format(total_assets) }}</div>
+    <div class="kpi-value">₹{{ total_assets | inr }}</div>
   </div>
   <div class="kpi-card liability">
     <div class="kpi-label">Total Liabilities</div>
-    <div class="kpi-value negative">₹{{ '{:,.0f}'.format(total_liabilities) }}</div>
+    <div class="kpi-value negative">₹{{ total_liabilities | inr }}</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-label">Net Worth</div>
-    <div class="kpi-value">₹{{ '{:,.0f}'.format(net_worth) }}</div>
+    <div class="kpi-value">₹{{ net_worth | inr }}</div>
   </div>
 </div>
 
 <div class="charts-grid">
   <div class="panel">
     <h3>Net Worth Trend</h3>
+    {% if trend and trend|length > 1 %}
     <canvas id="trendChart" height="220"></canvas>
+    {% else %}
+    <div class="empty-state" style="padding:32px 12px;">
+      <p class="text-muted" style="font-size:13px;">
+        {% if trend %}Only one snapshot recorded so far — the trend line will appear once there's more history.
+        {% else %}No net worth history yet — it's recorded automatically whenever you add, edit, or import assets.{% endif %}
+      </p>
+    </div>
+    {% endif %}
   </div>
   <div class="panel">
     <h3>Asset Allocation</h3>
+    {% if allocation and allocation.values() | sum %}
     <canvas id="allocationChart" height="220"></canvas>
+    {% else %}
+    <div class="empty-state" style="padding:32px 12px;">
+      <p class="text-muted" style="font-size:13px;">No assets to allocate yet — add an asset or import a statement to see the breakdown.</p>
+    </div>
+    {% endif %}
   </div>
 </div>
 
@@ -74,7 +89,7 @@
   </div>
   <div class="legend-row">
     {% for label, val in liquidity_buckets.items() %}
-      <span><span class="legend-dot" style="background: {{ ['#B8873B','#1B2A4A','#8B96AC'][loop.index0] }};"></span>{{ label }}: ₹{{ '{:,.0f}'.format(val) }}</span>
+      <span><span class="legend-dot" style="background: {{ ['#B8873B','#1B2A4A','#8B96AC'][loop.index0] }};"></span>{{ label }}: ₹{{ val | inr }}</span>
     {% endfor %}
   </div>
 </div>
@@ -84,38 +99,49 @@ const allocationData = {{ allocation | tojson }};
 const trendData = {{ trend | map(attribute='snapshot_date') | map('string') | list | tojson }};
 const trendValues = {{ trend | map(attribute='net_worth') | list | tojson }};
 
-new Chart(document.getElementById('trendChart'), {
-  type: 'line',
-  data: {
-    labels: trendData,
-    datasets: [{
-      label: 'Net Worth',
-      data: trendValues,
-      borderColor: '#B8873B',
-      backgroundColor: 'rgba(184,135,59,0.12)',
-      fill: true,
-      tension: 0.3,
-      pointRadius: 2,
-    }]
-  },
-  options: {
-    plugins: { legend: { display: false } },
-    scales: { y: { ticks: { callback: (v) => '₹' + v.toLocaleString('en-IN') } } }
-  }
-});
+const trendCanvas = document.getElementById('trendChart');
+if (trendCanvas) {
+  new Chart(trendCanvas, {
+    type: 'line',
+    data: {
+      labels: trendData,
+      datasets: [{
+        label: 'Net Worth',
+        data: trendValues,
+        borderColor: '#B8873B',
+        backgroundColor: 'rgba(184,135,59,0.12)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 2,
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { ticks: { callback: (v) => '₹' + v.toLocaleString('en-IN') } } }
+    }
+  });
+}
 
-const allocLabels = Object.keys(allocationData);
-const allocValues = Object.values(allocationData);
-new Chart(document.getElementById('allocationChart'), {
-  type: 'doughnut',
-  data: {
-    labels: allocLabels,
-    datasets: [{
-      data: allocValues,
-      backgroundColor: ['#B8873B', '#1B2A4A', '#8B96AC', '#2F6D4F', '#D9B26B', '#A6403A', '#5B6472'],
-    }]
-  },
-  options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
-});
+const allocCanvas = document.getElementById('allocationChart');
+if (allocCanvas) {
+  const allocLabels = Object.keys(allocationData);
+  const allocValues = Object.values(allocationData);
+  new Chart(allocCanvas, {
+    type: 'doughnut',
+    data: {
+      labels: allocLabels,
+      datasets: [{
+        data: allocValues,
+        backgroundColor: ['#B8873B', '#1B2A4A', '#8B96AC', '#2F6D4F', '#D9B26B', '#A6403A', '#5B6472'],
+      }]
+    },
+    options: {
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+        tooltip: { callbacks: { label: (ctx) => ctx.label + ': ₹' + Number(ctx.raw).toLocaleString('en-IN') } }
+      }
+    }
+  });
+}
 </script>
 {% endblock %}

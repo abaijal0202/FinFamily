@@ -32,10 +32,10 @@
         {% for r in cat_rows %}
         <tr>
           <td>{{ r.category }}</td>
-          <td class="text-right mono">₹{{ '{:,.0f}'.format(r.this_month) }}</td>
-          <td class="text-right mono">₹{{ '{:,.0f}'.format(r.prev_month) }}</td>
+          <td class="text-right mono">₹{{ r.this_month | inr }}</td>
+          <td class="text-right mono">₹{{ r.prev_month | inr }}</td>
           <td class="text-right mono" style="color: {{ 'var(--red)' if r.delta > 0 else ('var(--green)' if r.delta < 0 else 'var(--ink-soft)') }};">
-            {{ '+₹{:,.0f}'.format(r.delta) if r.delta > 0 else ('−₹{:,.0f}'.format(-r.delta) if r.delta < 0 else '—') }}
+            {{ ('+₹' + (r.delta | inr)) if r.delta > 0 else (('−₹' + ((-r.delta) | inr)) if r.delta < 0 else '—') }}
           </td>
         </tr>
         {% endfor %}
@@ -53,9 +53,9 @@
         {% for m in months[-6:] | reverse %}
         <tr>
           <td>{{ m.label }}</td>
-          <td class="text-right mono">₹{{ '{:,.0f}'.format(m.income) }}</td>
-          <td class="text-right mono">₹{{ '{:,.0f}'.format(m.expense) }}</td>
-          <td class="text-right mono" style="color: {{ 'var(--green)' if m.net >= 0 else 'var(--red)' }};">₹{{ '{:,.0f}'.format(m.net) }}</td>
+          <td class="text-right mono">₹{{ m.income | inr }}</td>
+          <td class="text-right mono">₹{{ m.expense | inr }}</td>
+          <td class="text-right mono" style="color: {{ 'var(--green)' if m.net >= 0 else 'var(--red)' }};">₹{{ m.net | inr }}</td>
         </tr>
         {% endfor %}
       </tbody>

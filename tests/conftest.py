@@ -35,3 +35,16 @@ def family_and_user(app):
     db.session.add(user)
     db.session.commit()
     return family, user
+
+
+@pytest.fixture()
+def client(app):
+    return app.test_client()
+
+
+@pytest.fixture()
+def logged_in_client(app, client, family_and_user):
+    """A test client already logged in as the family_and_user Tester."""
+    family, user = family_and_user
+    client.post("/login", data={"email": "tester@example.com", "password": "pw"})
+    return client

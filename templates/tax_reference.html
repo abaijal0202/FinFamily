@@ -11,11 +11,11 @@
 <div class="kpi-row" style="grid-template-columns: repeat(2,1fr);">
   <div class="kpi-card">
     <div class="kpi-label">Estimated Unrealized Gains</div>
-    <div class="kpi-value">₹{{ '{:,.0f}'.format(total_gain) }}</div>
+    <div class="kpi-value">₹{{ total_gain | inr }}</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-label">Estimated Annual Interest Income</div>
-    <div class="kpi-value">₹{{ '{:,.0f}'.format(total_interest) }}</div>
+    <div class="kpi-value">₹{{ total_interest | inr }}</div>
   </div>
 </div>
 
@@ -29,9 +29,9 @@
       <tr>
         <td>{{ r.name }}</td>
         <td><span class="pill">{{ r.category }}</span></td>
-        <td class="text-right mono">₹{{ '{:,.0f}'.format(r.purchase_value) }}</td>
-        <td class="text-right mono">₹{{ '{:,.0f}'.format(r.current_value or 0) }}</td>
-        <td class="text-right mono" style="color: {{ 'var(--green)' if r.gain >= 0 else 'var(--red)' }};">₹{{ '{:,.0f}'.format(r.gain) }}</td>
+        <td class="text-right mono">₹{{ r.purchase_value | inr }}</td>
+        <td class="text-right mono">₹{{ (r.current_value or 0) | inr }}</td>
+        <td class="text-right mono" style="color: {{ 'var(--green)' if r.gain >= 0 else 'var(--red)' }};">₹{{ r.gain | inr }}</td>
         <td>{{ r.term }}</td>
       </tr>
       {% endfor %}
@@ -53,7 +53,7 @@
         <td>{{ r.name }}</td>
         <td>{{ r.category }}</td>
         <td class="text-right">{{ r.rate ~ '%' if r.rate else '—' }}</td>
-        <td class="text-right mono">{{ '₹{:,.0f}'.format(r.estimated_annual_interest) if r.estimated_annual_interest else '—' }}</td>
+        <td class="text-right mono">{{ ('₹' + (r.estimated_annual_interest | inr)) if r.estimated_annual_interest else '—' }}</td>
       </tr>
       {% endfor %}
     </tbody>
